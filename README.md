@@ -21,6 +21,10 @@ A lightweight macOS app for studying course slides with an AI tutor that has rea
 
 ## Build
 
+For a prebuilt app, download `PPTReader-v1.0-macOS-arm64.zip` from the [v1.0 release](https://github.com/XYoungSky/PPTReader/releases/tag/v1.0), unzip it, and move `PPTReader.app` to Applications. This build requires an Apple Silicon Mac and macOS 14 or later. It uses an ad-hoc signature and is not notarized by Apple; macOS may block the first launch.
+
+To build from source:
+
 ```bash
 ./scripts/build-app.sh            # → build/PPTReader.app
 ./scripts/build-app.sh --install  # also copy to /Applications
@@ -34,7 +38,9 @@ Open **Settings** (⌘,) → **Model**:
 |---|---|
 | Base URL | `https://api.deepseek.com` |
 | API Key | your key |
-| Model | `deepseek-flash` (fast, sees images) or `deepseek-v4-pro` (stronger, text only) |
+| Model | Click **Test connection**, then choose a returned model, or enter a model ID supported by your provider |
+
+The model list combines the API results with your current selection. No model names are preset, and a model must be selected or entered before chatting.
 
 Models that reject images are detected automatically; the request is retried without the screenshot.
 

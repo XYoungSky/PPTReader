@@ -90,11 +90,12 @@ private struct ModelMenu: View {
             var items = settings.modelChoices.map { name in
                 PopMenuItem(name, checked: name == settings.effectiveModel) { settings.model = name }
             }
-            items += [.separator, PopMenuItem(tr("模型设置…", "Model Settings…"), icon: "gearshape") { SettingsWindow.show() }]
+            if !items.isEmpty { items.append(.separator) }
+            items.append(PopMenuItem(tr("模型设置…", "Model Settings…"), icon: "gearshape") { SettingsWindow.show() })
             return items
         } label: {
             HStack(spacing: 4) {
-                Text(settings.effectiveModel)
+                Text(settings.effectiveModel.isEmpty ? tr("选择模型", "Choose model") : settings.effectiveModel)
                 Image(systemName: "chevron.down")
                     .font(.system(size: 8, weight: .bold))
                     .foregroundStyle(Theme.text3)

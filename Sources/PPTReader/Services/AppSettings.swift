@@ -13,10 +13,6 @@ struct ConnectionConfig: Sendable {
 @Observable
 final class AppSettings {
     static let defaultBaseURL = "https://api.deepseek.com"
-    static let defaultModel = "deepseek-flash"
-    static let suggestedModels = ["deepseek-flash", "deepseek-v4-pro"]
-    /// DeepSeek 文档中已不再出现的旧模型名，自动迁移到 deepseek-flash。
-    private static let retiredModels: Set<String> = ["deepseek-chat", "deepseek-reasoner", "deepseek-v4-flash", "deepseek-v4-flash-vision-exp"]
 
     private enum Key {
         static let baseURL = "api.baseURL"
@@ -62,11 +58,7 @@ final class AppSettings {
     init() {
         let defaults = UserDefaults.standard
         baseURL = defaults.string(forKey: Key.baseURL) ?? Self.defaultBaseURL
-        let storedModel = (defaults.string(forKey: Key.model) ?? "").trimmingCharacters(in: .whitespaces)
-        // 空值或旧模型名迁移到 deepseek-flash，并写回设置
-        let resolvedModel = storedModel.isEmpty || Self.retiredModels.contains(storedModel) ? Self.defaultModel : storedModel
-        if resolvedModel != storedModel { defaults.set(resolvedModel, forKey: Key.model) }
-        model = resolvedModel
+        model = (defaults.string(forKey: Key.model) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         thinking = defaults.object(forKey: Key.thinking) as? Bool ?? true
         autoExplain = defaults.bool(forKey: Key.autoExplain)
         autoExplainDelay = defaults.object(forKey: Key.autoExplainDelay) as? Double ?? 1.5
@@ -74,7 +66,7 @@ final class AppSettings {
         historyLimit = defaults.object(forKey: Key.historyLimit) as? Int ?? 16
         sendPageImage = defaults.object(forKey: Key.sendPageImage) as? Bool ?? true
         noVisionModels = (defaults.stringArray(forKey: Key.noVisionModels) ?? []).filter { !$0.isEmpty }
-        fetchedModels = (defaults.stringArray(forKey: Key.fetchedModels) ?? []).filter { !Self.retiredModels.contains($0) }
+        fetchedModels = defaults.stringArray(forKey: Key.fetchedModels) ?? []
         chatFontSize = defaults.object(forKey: Key.chatFontSize) as? Double ?? 15
         chatSerif = defaults.bool(forKey: Key.chatSerif)
         hasAPIKey = defaults.bool(forKey: Key.hasKey)
@@ -103,13 +95,12 @@ final class AppSettings {
 
     var modelChoices: [String] {
         var seen = Set<String>()
-        return (Self.suggestedModels + fetchedModels + [model]).filter { !$0.isEmpty && seen.insert($0).inserted }
+        return (fetchedModels + [effectiveModel]).filter { !$0.isEmpty && seen.insert($0).inserted }
     }
 
-    /// 实际请求使用的模型名（输入框被清空时回退到默认模型）。
+    /// 实际请求使用的模型名，由用户填写或从接口返回的列表中选择。
     var effectiveModel: String {
-        let trimmed = model.trimmingCharacters(in: .whitespaces)
-        return trimmed.isEmpty ? Self.defaultModel : trimmed
+        model.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     /// 当前模型是否会收到页面截图。

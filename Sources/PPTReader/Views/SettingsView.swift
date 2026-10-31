@@ -171,7 +171,7 @@ private struct ModelSettings: View {
                 }
                 SettingsRow(title: tr("模型", "Model"), detail: modelDetail, divider: false) {
                     HStack(spacing: 6) {
-                        ThemedField(text: $settings.model, placeholder: AppSettings.defaultModel, monospaced: true)
+                        ThemedField(text: $settings.model, placeholder: tr("输入或选择模型", "Enter or choose a model"), monospaced: true)
                         PopMenuButton(trailing: true, style: IconButtonStyle(size: 30)) {
                             settings.modelChoices.map { name in
                                 PopMenuItem(name, checked: name == settings.effectiveModel) { settings.model = name }
@@ -179,6 +179,7 @@ private struct ModelSettings: View {
                         } label: {
                             Label(tr("选择模型", "Choose model"), systemImage: "chevron.up.chevron.down")
                         }
+                        .disabled(settings.modelChoices.isEmpty)
                     }
                     .frame(width: 300)
                 }

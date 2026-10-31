@@ -8,6 +8,7 @@ enum StreamEvent: Sendable {
 
 enum APIError: LocalizedError {
     case missingKey
+    case missingModel
     case invalidURL(String)
     case http(Int, String)
     case server(String)
@@ -16,6 +17,8 @@ enum APIError: LocalizedError {
         switch self {
         case .missingKey:
             tr("尚未设置 API Key", "API key not set")
+        case .missingModel:
+            tr("请先在设置中选择或填写模型名称", "Choose or enter a model name in Settings first")
         case .invalidURL(let url):
             tr("API 地址无效：", "Invalid API URL: ") + url
         case .http(let code, let message):
@@ -81,6 +84,9 @@ enum OpenAIClient {
         AsyncThrowingStream { continuation in
             let task = Task {
                 do {
+                    guard !config.model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                        throw APIError.missingModel
+                    }
                     var request = try request(config, path: "chat/completions")
                     request.httpMethod = "POST"
                     request.setValue("text/event-stream", forHTTPHeaderField: "Accept")

@@ -21,6 +21,10 @@
 
 ## 构建
 
+直接使用：从 [v1.0 发布页](https://github.com/XYoungSky/PPTReader/releases/tag/v1.0) 下载 `PPTReader-v1.0-macOS-arm64.zip`，解压后将 `PPTReader.app` 移入「应用程序」。此安装包需要 Apple Silicon Mac 和 macOS 14 及以上版本。应用采用本地临时签名，未经 Apple 公证，首次打开可能被 macOS 拦截。
+
+从源码构建：
+
 ```bash
 ./scripts/build-app.sh            # 生成 build/PPTReader.app
 ./scripts/build-app.sh --install  # 同时安装到 /Applications
@@ -34,7 +38,9 @@
 |---|---|
 | API 地址 | `https://api.deepseek.com` |
 | API Key | 你的 Key |
-| 模型 | `deepseek-flash`（快速，支持识图）或 `deepseek-v4-pro`（更强，仅文字） |
+| 模型 | 点击「测试连接」后选择接口返回的模型，或手动填写服务商支持的模型 ID |
+
+模型列表由接口返回结果和当前选择组成，不再预设模型名称；开始对话前需选择或填写模型。
 
 如果模型不支持图片，会自动识别并去掉截图重试。
 
