@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PPTReader</title>
+  <link rel="stylesheet" href="vendor/katex/katex.min.css">
+  <link rel="stylesheet" href="vendor/hljs/github.min.css" media="(prefers-color-scheme: light)">
+  <link rel="stylesheet" href="vendor/hljs/github-dark.min.css" media="(prefers-color-scheme: dark)">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="edge-fade top" aria-hidden="true"></div>
+  <section id="empty" hidden></section>
+  <main id="thread"></main>
+  <div class="edge-fade bottom" aria-hidden="true"></div>
+  <button id="jump" class="jump-bottom" type="button" aria-label="Scroll to bottom">
+    <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10M3.5 8.5 8 13l4.5-4.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+  </button>
+
+  <script src="vendor/markdown-it.min.js"></script>
+  <script src="vendor/purify.min.js"></script>
+  <script src="vendor/katex/katex.min.js"></script>
+  <script src="vendor/katex/mhchem.min.js"></script>
+  <script src="vendor/hljs/highlight.min.js"></script>
+  <script src="renderer.js"></script>
+</body>
+</html>
