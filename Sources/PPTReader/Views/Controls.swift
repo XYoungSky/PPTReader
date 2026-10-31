@@ -34,27 +34,31 @@ struct SegmentedPicker<Value: Hashable>: View {
         HStack(spacing: 2) {
             ForEach(options, id: \.0) { value, title in
                 let selected = value == selection
-                Text(title)
-                    .font(.system(size: 12, weight: selected ? .medium : .regular))
-                    .foregroundStyle(selected ? Theme.text : Theme.text2)
-                    .padding(.horizontal, 10)
-                    .frame(height: 24)
-                    .background {
-                        if selected {
-                            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                .fill(Theme.surface)
-                                .shadow(color: .black.opacity(0.08), radius: 1.5, y: 1)
-                                .matchedGeometryEffect(id: "segment", in: highlight)
+                Button {
+                    withAnimation(Motion.snappy) { selection = value }
+                } label: {
+                    Text(title)
+                        .font(.system(size: 12, weight: selected ? .medium : .regular))
+                        .foregroundStyle(selected ? Theme.text : Theme.text2)
+                        .padding(.horizontal, 10)
+                        .frame(height: 24)
+                        .background {
+                            if selected {
+                                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                    .fill(Theme.surface)
+                                    .shadow(color: .black.opacity(0.08), radius: 1.5, y: 1)
+                                    .matchedGeometryEffect(id: "segment", in: highlight)
+                            }
                         }
-                    }
-                    .contentShape(Rectangle())
-                    .onTapGesture {
-                        withAnimation(Motion.snappy) { selection = value }
-                    }
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityAddTraits(selected ? [.isSelected] : [])
             }
         }
         .padding(2)
         .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Theme.hover))
+        .accessibilityElement(children: .contain)
     }
 }
 

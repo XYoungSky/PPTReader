@@ -470,6 +470,31 @@
   const $thread = document.getElementById('thread');
   const $empty = document.getElementById('empty');
 
+  // 公式优先在运算符处换行；矩阵等无法断行的内容缩放到可用宽度。
+  // 面板缩放、流式更新与字体加载后重新测量，避免裁掉公式或横向滚动。
+  let mathLayoutQueued = false;
+  function scheduleMathLayout() {
+    if (mathLayoutQueued) return;
+    mathLayoutQueued = true;
+    requestAnimationFrame(() => {
+      mathLayoutQueued = false;
+      const formulas = Array.from($thread.querySelectorAll('.katex'));
+      for (const formula of formulas) formula.style.zoom = '1';
+      const scales = formulas.map((formula) => {
+        const container = formula.closest('.katex-display, td, th, p, li, .md');
+        if (!container || !container.clientWidth) return 1;
+        const style = getComputedStyle(container);
+        const available = container.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+        const width = Math.max(formula.scrollWidth, formula.getBoundingClientRect().width);
+        return width > 0 && available > 0 ? Math.min(1, available / width) : 1;
+      });
+      formulas.forEach((formula, index) => { formula.style.zoom = String(scales[index]); });
+    });
+  }
+  new ResizeObserver(scheduleMathLayout).observe($thread);
+  new MutationObserver(scheduleMathLayout).observe($thread, { childList: true, subtree: true });
+  document.fonts.addEventListener('loadingdone', scheduleMathLayout);
+
   const state = {
     meta: { title: '', pageCount: 0, currentPage: 0, hasDocument: false, hasKey: true },
     entries: new Map(),
@@ -885,6 +910,7 @@
     if (state.meta.fontSize) document.documentElement.style.setProperty('--font-size', `${state.meta.fontSize}px`);
     document.body.classList.toggle('serif', !!state.meta.serif);
     document.documentElement.lang = state.meta.lang === 'en' ? 'en' : 'zh-CN';
+    scheduleMathLayout();
   }
 
   // ---------------------------------------------------------------- 对外接口

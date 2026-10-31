@@ -149,7 +149,8 @@ final class ChatController {
             text: reader.text,
             charLimit: settings.contextCharLimit,
             historyLimit: settings.historyLimit,
-            pageImageJPEG: image
+            pageImageJPEG: image,
+            explanationStyle: settings.explanationStyle
         )
         let payload = PromptBuilder.requestMessages(history: messages, context: context)
 

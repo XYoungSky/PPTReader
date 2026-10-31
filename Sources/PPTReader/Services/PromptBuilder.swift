@@ -44,6 +44,7 @@ enum PromptBuilder {
         var charLimit: Int
         var historyLimit: Int
         var pageImageJPEG: Data?
+        var explanationStyle = ExplanationStyle()
     }
 
     // MARK: - 指令
@@ -59,8 +60,8 @@ enum PromptBuilder {
             let (title, prompt): (String, String) = switch action {
             case .explain: (
                 tr("解释选中内容", "Explain selection"),
-                tr("请解释我选中的这段内容：结合它所在的页面和整份课件的上下文，说明它的含义、在知识体系中的作用，必要时给出推导或例子。",
-                   "Explain the selected passage: using its page and the whole deck as context, say what it means and how it fits in, with a derivation or example if helpful."))
+                tr("请解释我选中的这段内容：结合它所在的页面和整份课件的上下文，说明它的含义、在知识体系中的作用，按讲解风格偏好决定详略、配图与例题。",
+                   "Explain the selected passage: using its page and the whole deck as context, say what it means and how it fits in. Follow the explanation style preferences for detail, diagrams and worked examples."))
             case .translate: (
                 tr("翻译选中内容", "Translate selection"),
                 tr("请翻译我选中的内容（外文译成中文，中文译成英文）。保留公式与专业术语原文，并对难懂的术语结合课件上下文做简短注释。",
@@ -86,8 +87,8 @@ enum PromptBuilder {
                     "Summarize the whole deck as a nested list: main topics, key concepts, results and formulas, how the parts connect, with page numbers."), page: page)
             case .outline:
                 return ChatMessage(role: .user, content: tr("梳理知识框架", "Concept map"), prompt: tr(
-                    "请为整份课件梳理知识框架：先用一个 mermaid 图（flowchart 或 mindmap）画出知识结构，再简要说明建议的学习顺序、重点和难点，并注明对应页码。",
-                    "Map out the deck's concepts: first draw the structure as a mermaid diagram (flowchart or mindmap), then briefly suggest a study order and the key and hard parts, with page numbers."), page: page)
+                    "请为整份课件梳理知识框架：按讲解风格偏好选用文字列表、SVG 或 Mermaid 展示知识结构，再说明建议的学习顺序、重点和难点，并注明对应页码。",
+                    "Map out the deck's concepts: use a text list, SVG or Mermaid according to the explanation style preferences, then suggest a study order and the key and hard parts, with page numbers."), page: page)
             case .quiz:
                 return ChatMessage(role: .user, content: tr("出几道练习题", "Quiz me"), prompt: tr(
                     "请围绕整份课件（侧重第 \(page) 页附近的内容）出 3 道练习题，由浅入深，题型包含选择题与计算/简答题。每道题的答案与解析放在该题下方，用 <details><summary>查看答案</summary> … </details> 折叠起来。",
@@ -101,20 +102,20 @@ enum PromptBuilder {
         请讲解第 \(page) 页。
         1. 先用一两句话说明这一页在整份课件中的位置与作用（承接了什么、为后面什么做铺垫）；
         2. 逐条讲清这一页的核心概念、公式或图示：公式要解释每个符号的含义，必要时给出推导；
-        3. 给出一个帮助理解的例子或类比；
+        3. 按讲解风格偏好控制详略、图表使用与例题数量；
         4. 如果这一页主要是图片或图表，结合截图与上下文说明它想表达的内容。
         """, """
         Explain page \(page).
         1. In a sentence or two, place this page within the deck (what it builds on, what it sets up).
         2. Go through its key concepts, formulas or figures: define every symbol and derive where useful.
-        3. Give one example or analogy that makes it click.
+        3. Follow the explanation style preferences for detail, diagrams and worked examples.
         4. If the page is mostly images or charts, use the screenshot and context to explain what it shows.
         """)
     }
 
     private static func autoExplainPrompt(_ page: Int) -> String {
-        tr("请简明讲解第 \(page) 页：说明它与前后内容的联系，突出核心知识点和关键公式，控制在 400 字左右。如果这一页只是标题页、目录或过渡页，用一两句话带过即可。",
-           "Briefly explain page \(page): how it connects to what comes before and after, its key ideas and formulas, in about 200 words. If it is just a title, contents or transition page, one or two sentences are enough.")
+        tr("请按讲解风格偏好讲解第 \(page) 页：说明它与前后内容的联系，突出核心知识点和关键公式，详略、图表与例题数量遵循所选偏好。如果这一页只是标题页、目录或过渡页，用一两句话带过即可。",
+           "Explain page \(page) according to the explanation style preferences: how it connects to what comes before and after, its key ideas and formulas, with the selected level of detail, diagrams and worked examples. If it is just a title, contents or transition page, one or two sentences are enough.")
     }
 
     // MARK: - 请求消息
@@ -199,9 +200,11 @@ enum PromptBuilder {
         ## 讲解原则
         - 始终以整份课件为背景：讲解某一页或某段选中内容时，要联系它在整份课件中的位置、前置知识与后续内容，而不是孤立地解释片段；
         - 学生的每条消息开头都会注明他正在看的页码，以及（如果有）他选中的文字；
-        - 先讲直觉，再讲严谨定义与推导；重要概念配合具体例子；
+        - 先讲直觉，再按讲解风格偏好展开定义、推导与例题；
         - 提到课件页码时写成「第 N 页」，学生可以点击跳转；
         - 使用简体中文回答，专业术语可以附上英文原词。
+
+        \(context.explanationStyle.prompt)
 
         ## 输出格式（界面支持完整渲染）
         - 使用 Markdown：标题、列表、表格、引用、代码块（注明语言）；
@@ -228,9 +231,11 @@ enum PromptBuilder {
         ## How to teach
         - Always use the whole deck as context: when explaining a page or a selected passage, connect it to where it sits in the deck, what it builds on and what follows — never explain a fragment in isolation;
         - Each student message starts with the page they are viewing and, if any, the text they selected;
-        - Start with intuition, then give precise definitions and derivations; pair important ideas with concrete examples;
+        - Start with intuition, then develop definitions, derivations and worked examples according to the explanation style preferences;
         - Refer to pages as "page N" so the student can click to jump there;
         - Answer in English.
+
+        \(context.explanationStyle.prompt)
 
         ## Output format (fully rendered)
         - Markdown: headings, lists, tables, quotes, fenced code blocks with a language;

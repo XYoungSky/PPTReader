@@ -1,11 +1,12 @@
 #!/bin/zsh
 # 编译并打包 PPTReader.app。用法：
-#   ./scripts/build-app.sh            # 生成 build/PPTReader.app
+#   ./scripts/build-app.sh            # 生成 build/Products.noindex/PPTReader.app
 #   ./scripts/build-app.sh --install  # 同时复制到 /Applications
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-APP="build/PPTReader.app"
+# 构建副本不参与 Spotlight / 应用搜索，正式入口固定在 /Applications。
+APP="build/Products.noindex/PPTReader.app"
 
 swift build -c release --arch arm64
 BIN_DIR=$(swift build -c release --arch arm64 --show-bin-path)

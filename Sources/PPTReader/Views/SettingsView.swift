@@ -33,7 +33,7 @@ enum SettingsWindow {
 }
 
 enum SettingsSection: String, CaseIterable, Identifiable {
-    case model, explain, appearance, data
+    case model, explain, explanationStyle, appearance, data
 
     var id: String { rawValue }
 
@@ -41,6 +41,7 @@ enum SettingsSection: String, CaseIterable, Identifiable {
         switch self {
         case .model: tr("模型", "Model")
         case .explain: tr("讲解", "Tutor")
+        case .explanationStyle: tr("讲解风格", "Explanation style")
         case .appearance: tr("外观", "Appearance")
         case .data: tr("数据", "Data")
         }
@@ -50,6 +51,7 @@ enum SettingsSection: String, CaseIterable, Identifiable {
         switch self {
         case .model: "cpu"
         case .explain: "sparkles"
+        case .explanationStyle: "slider.horizontal.3"
         case .appearance: "paintbrush"
         case .data: "externaldrive"
         }
@@ -72,6 +74,7 @@ struct SettingsView: View {
                         switch section {
                         case .model: ModelSettings()
                         case .explain: ExplainSettings()
+                        case .explanationStyle: ExplanationStyleSettings()
                         case .appearance: AppearanceSettings()
                         case .data: DataSettings()
                         }
@@ -270,6 +273,48 @@ private struct ExplainSettings: View {
                     SegmentedPicker(selection: $settings.historyLimit, options: [(8, "8"), (16, "16"), (32, "32")])
                 }
             }
+        }
+    }
+}
+
+// MARK: - 讲解风格
+
+private struct ExplanationStyleSettings: View {
+    @Environment(AppSettings.self) private var settings
+
+    var body: some View {
+        @Bindable var settings = settings
+        VStack(alignment: .leading, spacing: 22) {
+            SettingsCard(footer: tr("控制回答的篇幅与展开程度。简洁模式保留重点，详细模式展开推导与步骤。",
+                                    "Choose how much detail to include, from key points to step-by-step explanations.")) {
+                SettingsRow(title: tr("回答详略", "Answer detail"), divider: false) {
+                    SegmentedPicker(selection: $settings.explanationStyle.detail,
+                                    options: ExplanationStyle.Detail.allCases.map { ($0, $0.title) })
+                        .accessibilityLabel(tr("回答详略", "Answer detail"))
+                }
+            }
+            SettingsCard(footer: tr("选择图表的使用频率。多用 SVG 时，会优先用图示解释关系、流程与结构。",
+                                    "Choose how often to use visuals. More SVG favors diagrams for relationships, processes and structures.")) {
+                SettingsRow(title: tr("图表使用", "Diagrams"), divider: false) {
+                    SegmentedPicker(selection: $settings.explanationStyle.diagrams,
+                                    options: ExplanationStyle.Diagrams.allCases.map { ($0, $0.title) })
+                        .accessibilityLabel(tr("图表使用", "Diagrams"))
+                }
+            }
+            SettingsCard(footer: tr("选择是否补充例题。每个知识点模式会附上题目、解题步骤与答案。",
+                                    "Choose when to add worked examples, including the question, solution steps and answer.")) {
+                SettingsRow(title: tr("例题数量", "Examples"), divider: false) {
+                    SegmentedPicker(selection: $settings.explanationStyle.examples,
+                                    options: ExplanationStyle.Examples.allCases.map { ($0, $0.title) })
+                        .accessibilityLabel(tr("例题数量", "Examples"))
+                }
+            }
+            Text(tr("自动保存，从下一次回答起生效。你在提问中的明确要求优先。",
+                    "Saved automatically. Applies to the next answer; explicit requests in your question take priority."))
+                .font(.system(size: 11.5))
+                .foregroundStyle(Theme.text2)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 4)
         }
     }
 }

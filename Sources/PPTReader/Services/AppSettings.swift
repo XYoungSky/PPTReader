@@ -21,6 +21,9 @@ final class AppSettings {
         static let hasKey = "api.hasKey"
         static let autoExplain = "explain.auto"
         static let autoExplainDelay = "explain.autoDelay"
+        static let explanationDetail = "explain.style.detail"
+        static let explanationDiagrams = "explain.style.diagrams"
+        static let explanationExamples = "explain.style.examples"
         static let contextLimit = "context.charLimit"
         static let historyLimit = "context.historyLimit"
         static let sendPageImage = "context.pageImage"
@@ -30,13 +33,20 @@ final class AppSettings {
         static let chatSerif = "ui.chatSerif"
     }
 
-    @ObservationIgnored private let defaults = UserDefaults.standard
+    @ObservationIgnored private let defaults: UserDefaults
 
     var baseURL: String { didSet { defaults.set(baseURL, forKey: Key.baseURL) } }
     var model: String { didSet { defaults.set(model, forKey: Key.model) } }
     var thinking: Bool { didSet { defaults.set(thinking, forKey: Key.thinking) } }
     var autoExplain: Bool { didSet { defaults.set(autoExplain, forKey: Key.autoExplain) } }
     var autoExplainDelay: Double { didSet { defaults.set(autoExplainDelay, forKey: Key.autoExplainDelay) } }
+    var explanationStyle: ExplanationStyle {
+        didSet {
+            defaults.set(explanationStyle.detail.rawValue, forKey: Key.explanationDetail)
+            defaults.set(explanationStyle.diagrams.rawValue, forKey: Key.explanationDiagrams)
+            defaults.set(explanationStyle.examples.rawValue, forKey: Key.explanationExamples)
+        }
+    }
     /// 放进上下文的课件文字上限（字符数）。
     var contextCharLimit: Int { didSet { defaults.set(contextCharLimit, forKey: Key.contextLimit) } }
     /// 每次请求携带的历史消息条数。
@@ -55,13 +65,18 @@ final class AppSettings {
     private(set) var hasAPIKey: Bool
     @ObservationIgnored private var cachedKey: String?
 
-    init() {
-        let defaults = UserDefaults.standard
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
         baseURL = defaults.string(forKey: Key.baseURL) ?? Self.defaultBaseURL
         model = (defaults.string(forKey: Key.model) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         thinking = defaults.object(forKey: Key.thinking) as? Bool ?? true
         autoExplain = defaults.bool(forKey: Key.autoExplain)
         autoExplainDelay = defaults.object(forKey: Key.autoExplainDelay) as? Double ?? 1.5
+        explanationStyle = ExplanationStyle(
+            detail: ExplanationStyle.Detail(rawValue: defaults.string(forKey: Key.explanationDetail) ?? "") ?? .normal,
+            diagrams: ExplanationStyle.Diagrams(rawValue: defaults.string(forKey: Key.explanationDiagrams) ?? "") ?? .normal,
+            examples: ExplanationStyle.Examples(rawValue: defaults.string(forKey: Key.explanationExamples) ?? "") ?? .necessary
+        )
         contextCharLimit = defaults.object(forKey: Key.contextLimit) as? Int ?? 400_000
         historyLimit = defaults.object(forKey: Key.historyLimit) as? Int ?? 16
         sendPageImage = defaults.object(forKey: Key.sendPageImage) as? Bool ?? true
