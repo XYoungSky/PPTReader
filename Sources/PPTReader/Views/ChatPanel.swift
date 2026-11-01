@@ -24,12 +24,8 @@ struct ChatPanel: View {
 
     private var header: some View {
         HStack(spacing: 2) {
-            Text(tr("AI 讲解", "AI Tutor"))
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(Theme.text)
-                .padding(.leading, 8)
-            Spacer(minLength: 8)
             ModelMenu()
+            Spacer(minLength: 8)
             Button {
                 settings.autoExplain.toggle()
             } label: {

@@ -152,6 +152,52 @@ struct StatsSummary {
     }
 }
 
+// MARK: - 热力图
+
+/// 最近一年的逐日记录，像 GitHub 贡献图那样每列一周，最右一列是本周。
+struct StudyCalendar {
+    struct Day: Identifiable {
+        let date: Date
+        /// 第几周（从左往右）。
+        let column: Int
+        /// 一周中的第几天，从 calendar.firstWeekday 起算。
+        let row: Int
+        var seconds: Double = 0
+        var interactions = 0
+        var tokens = 0
+
+        var id: Date { date }
+    }
+
+    /// 今天之后的日子不包含在内。
+    private(set) var days: [Day] = []
+    let columns: Int
+    private(set) var activeDays = 0
+
+    init(log: StatsLog, weeks: Int = 53, now: Date = Date(), calendar: Calendar = .current) {
+        columns = weeks
+        let today = calendar.startOfDay(for: now)
+        let thisWeek = calendar.dateInterval(of: .weekOfYear, for: today)?.start ?? today
+        var cursor = calendar.date(byAdding: .weekOfYear, value: -(weeks - 1), to: thisWeek) ?? thisWeek
+        var index = 0
+        while cursor <= today {
+            var day = Day(date: cursor, column: index / 7, row: index % 7)
+            if let record = log.days[StatsLog.key(for: cursor, calendar: calendar)] {
+                for entry in record.decks.values {
+                    day.seconds += entry.seconds
+                    day.interactions += entry.explains + entry.questions
+                    day.tokens += entry.tokens.total
+                }
+                if StatsSummary.isActive(record) { activeDays += 1 }
+            }
+            days.append(day)
+            index += 1
+            guard let next = calendar.date(byAdding: .day, value: 1, to: cursor) else { break }
+            cursor = next
+        }
+    }
+}
+
 private func bucketStart(_ date: Date, unit: StatsSummary.Unit, calendar: Calendar) -> Date {
     switch unit {
     case .day: calendar.startOfDay(for: date)
@@ -191,5 +237,10 @@ enum StatsFormat {
 
     static func percent(_ value: Double) -> String {
         "\(Int((value * 100).rounded()))%"
+    }
+
+    /// 日期格式跟随界面语言，而不是系统语言。
+    static var dateStyle: Date.FormatStyle {
+        Date.FormatStyle(locale: Locale(identifier: Localizer.shared.isEnglish ? "en_US" : "zh_CN"))
     }
 }

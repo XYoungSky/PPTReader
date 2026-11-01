@@ -46,6 +46,23 @@ enum StatsMetric: String, CaseIterable, Identifiable {
         case .tokens: tr("Token", "Tokens")
         }
     }
+
+    /// 柱高和热力图深浅所用的数值；时长以分钟计。
+    func value(seconds: Double, interactions: Int, tokens: Int) -> Double {
+        switch self {
+        case .time: seconds / 60
+        case .interactions: Double(interactions)
+        case .tokens: Double(tokens)
+        }
+    }
+
+    func label(_ value: Double) -> String {
+        switch self {
+        case .time: StatsFormat.duration(value * 60)
+        case .interactions: tr("\(Int(value)) 次", Int(value) == 1 ? "1 question" : "\(Int(value)) questions")
+        case .tokens: StatsFormat.compact(Int(value)) + tr(" Token", " tokens")
+        }
+    }
 }
 
 struct StatsView: View {
@@ -67,6 +84,7 @@ struct StatsView: View {
                 } else {
                     tiles(summary)
                     chartCard(summary)
+                    HeatmapCard(year: StudyCalendar(log: log), metric: metric)
                     if !summary.decks.isEmpty { DeckList(rows: summary.decks, openDeck: openDeck) }
                     if summary.models.contains(where: { !$0.name.isEmpty }) { ModelList(rows: summary.models) }
                 }
@@ -303,24 +321,15 @@ private struct ColumnChart: View {
     }
 
     private func value(of bucket: StatsSummary.Bucket) -> Double {
-        switch metric {
-        case .time: bucket.seconds / 60
-        case .interactions: Double(bucket.interactions)
-        case .tokens: Double(bucket.tokens)
-        }
+        metric.value(seconds: bucket.seconds, interactions: bucket.interactions, tokens: bucket.tokens)
     }
 
     private func valueLabel(_ value: Double) -> String {
-        switch metric {
-        case .time: StatsFormat.duration(value * 60)
-        case .interactions: tr("\(Int(value)) 次", Int(value) == 1 ? "1 question" : "\(Int(value)) questions")
-        case .tokens: StatsFormat.compact(Int(value)) + tr(" Token", " tokens")
-        }
+        metric.label(value)
     }
 
     private func dateLabel(_ date: Date, long: Bool) -> String {
-        let english = Localizer.shared.isEnglish
-        let style = Date.FormatStyle(locale: Locale(identifier: english ? "en_US" : "zh_CN"))
+        let style = StatsFormat.dateStyle
         switch unit {
         case .day:
             if long { return date.formatted(style.month(.abbreviated).day().weekday(.abbreviated)) }
@@ -397,6 +406,224 @@ private struct Tooltip: View {
                 .shadow(color: .black.opacity(0.12), radius: 8, y: 3)
         )
         .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Theme.border))
+    }
+}
+
+// MARK: - 热力图
+
+/// 最近一年的逐日热力图，颜色深浅跟随柱状图选中的指标。
+private struct HeatmapCard: View {
+    let year: StudyCalendar
+    let metric: StatsMetric
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .center, spacing: 8) {
+                Text(tr("过去一年", "Past year"))
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Theme.text)
+                Text(tr("学习 \(year.activeDays) 天", year.activeDays == 1 ? "1 day" : "\(year.activeDays) days"))
+                    .font(.system(size: 12))
+                    .foregroundStyle(Theme.text3)
+                    .contentTransition(.numericText())
+                Spacer(minLength: 12)
+                HeatmapLegend()
+            }
+            HeatmapGrid(year: year, metric: metric)
+        }
+        .padding(16)
+        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Theme.surface))
+        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Theme.border))
+    }
+}
+
+/// 空白格加四级由浅到深的陶土橙；叠在卡片底色上，浅色、深色模式各自成立。
+private enum HeatLevel {
+    static let empty = Color(light: 0x1F1E1D, dark: 0xFFFFFF, lightAlpha: 0.06, darkAlpha: 0.07)
+    private static let opacities: [Double] = [0.3, 0.5, 0.72, 1]
+
+    static func color(_ level: Int) -> Color {
+        level <= 0 ? empty : Theme.accent.opacity(opacities[min(level, opacities.count) - 1])
+    }
+
+    /// 以非零值的第 90 百分位为最深一级，免得个别特别长的一天把其余格子都压成最浅色。
+    static func reference(_ values: [Double]) -> Double {
+        let positive = values.filter { $0 > 0 }.sorted()
+        guard !positive.isEmpty else { return 0 }
+        return positive[Int((Double(positive.count - 1) * 0.9).rounded())]
+    }
+
+    static func level(_ value: Double, reference: Double) -> Int {
+        guard value > 0, reference > 0 else { return 0 }
+        return min(4, max(1, Int((value / reference * 4).rounded(.up))))
+    }
+}
+
+private struct HeatmapLegend: View {
+    var body: some View {
+        HStack(spacing: 3) {
+            Text(tr("少", "Less"))
+                .padding(.trailing, 3)
+            ForEach(0..<5, id: \.self) { level in
+                RoundedRectangle(cornerRadius: 2, style: .continuous)
+                    .fill(HeatLevel.color(level))
+                    .frame(width: 10, height: 10)
+            }
+            Text(tr("多", "More"))
+                .padding(.leading, 3)
+        }
+        .font(.system(size: 11))
+        .foregroundStyle(Theme.text3)
+        .accessibilityHidden(true)
+    }
+}
+
+/// 每列一周、每行一个星期几；格子随卡片宽度缩放，让一整年正好铺满。悬停显示当天数值。
+private struct HeatmapGrid: View {
+    let year: StudyCalendar
+    let metric: StatsMetric
+    @ViewState private var hovered: Int?
+
+    private static let labelWidth: CGFloat = 28
+    private static let monthHeight: CGFloat = 18
+
+    private struct AxisLabel: Identifiable {
+        let id: Int
+        let text: String
+    }
+
+    var body: some View {
+        let values = year.days.map { metric.value(seconds: $0.seconds, interactions: $0.interactions, tokens: $0.tokens) }
+        let reference = HeatLevel.reference(values)
+        let columns = year.columns
+        WidthDrivenLayout(height: { width in
+            let (pitch, gap) = Self.pitch(width: width, columns: columns)
+            return Self.monthHeight + 7 * pitch - gap
+        }) {
+            GeometryReader { geometry in
+                let (pitch, gap) = Self.pitch(width: geometry.size.width, columns: columns)
+                let cell = pitch - gap
+                let radius = max(1.5, cell * 0.2)
+                let left = Self.labelWidth
+                let top = Self.monthHeight
+
+                ZStack(alignment: .topLeading) {
+                    Color.clear
+                    ForEach(monthLabels) { label in
+                        Text(label.text)
+                            .font(.system(size: 10.5))
+                            .foregroundStyle(Theme.text3)
+                            .fixedSize()
+                            .offset(x: left + CGFloat(label.id) * pitch)
+                    }
+                    ForEach(weekdayLabels) { label in
+                        Text(label.text)
+                            .font(.system(size: 10.5))
+                            .foregroundStyle(Theme.text3)
+                            .fixedSize()
+                            .frame(height: cell)
+                            .offset(y: top + CGFloat(label.id) * pitch)
+                    }
+                    ForEach(Array(year.days.enumerated()), id: \.element.id) { index, day in
+                        RoundedRectangle(cornerRadius: radius, style: .continuous)
+                            .fill(HeatLevel.color(HeatLevel.level(values[index], reference: reference)))
+                            .frame(width: cell, height: cell)
+                            .offset(x: left + CGFloat(day.column) * pitch, y: top + CGFloat(day.row) * pitch)
+                    }
+                    if let hovered, hovered < year.days.count {
+                        let day = year.days[hovered]
+                        RoundedRectangle(cornerRadius: radius, style: .continuous)
+                            .strokeBorder(Theme.text.opacity(0.55), lineWidth: 1)
+                            .frame(width: cell, height: cell)
+                            .offset(x: left + CGFloat(day.column) * pitch, y: top + CGFloat(day.row) * pitch)
+                            .allowsHitTesting(false)
+                    }
+                }
+                .frame(width: geometry.size.width, height: geometry.size.height, alignment: .topLeading)
+                .contentShape(Rectangle())
+                .onContinuousHover { phase in
+                    var index: Int?
+                    if case .active(let point) = phase {
+                        let column = Int(((point.x - left) / pitch).rounded(.down))
+                        let row = Int(((point.y - top) / pitch).rounded(.down))
+                        if (0..<columns).contains(column), (0..<7).contains(row), column * 7 + row < year.days.count {
+                            index = column * 7 + row
+                        }
+                    }
+                    if index != hovered { hovered = index }
+                }
+                // 悬停提示：底边中点对准格子上方 6pt
+                .overlay(alignment: .topLeading) {
+                    if let hovered, hovered < year.days.count {
+                        let day = year.days[hovered]
+                        let box = CGSize(width: 260, height: 80)
+                        let centerX = min(max(left + CGFloat(day.column) * pitch + cell / 2, 80), geometry.size.width - 80)
+                        let bottom = top + CGFloat(day.row) * pitch - 6
+                        Tooltip(title: day.date.formatted(StatsFormat.dateStyle.year().month(.abbreviated).day().weekday(.abbreviated)),
+                                value: metric.label(values[hovered]))
+                            .fixedSize()
+                            .frame(width: box.width, height: box.height, alignment: .bottom)
+                            .offset(x: centerX - box.width / 2, y: bottom - box.height)
+                            .allowsHitTesting(false)
+                            .transition(.opacity)
+                    }
+                }
+            }
+        }
+        .animation(Motion.hover, value: hovered)
+        .animation(Motion.content, value: metric)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(tr("过去一年", "Past year"))
+        .accessibilityValue(tr("学习 \(year.activeDays) 天", year.activeDays == 1 ? "1 day" : "\(year.activeDays) days"))
+    }
+
+    /// 格距（格子边长加间隙）随宽度变化，最小 6pt、最大 18pt。
+    private static func pitch(width: CGFloat, columns: Int) -> (pitch: CGFloat, gap: CGFloat) {
+        let count = CGFloat(max(columns, 1))
+        let gap: CGFloat = (width - labelWidth) / count >= 12 ? 3 : 2
+        return (min(18, max(6, (width - labelWidth + gap) / count)), gap)
+    }
+
+    /// 每个月第一次出现在首行的那一列标上月份；最左一列只剩上个月的尾巴时不标，免得和下个月挤在一起。
+    private var monthLabels: [AxisLabel] {
+        let calendar = Calendar.current
+        var labels: [AxisLabel] = []
+        var previous: Int?
+        for day in year.days where day.row == 0 {
+            let month = calendar.component(.month, from: day.date)
+            guard month != previous else { continue }
+            previous = month
+            labels.append(AxisLabel(id: day.column, text: day.date.formatted(StatsFormat.dateStyle.month(.abbreviated))))
+        }
+        if labels.count > 1, labels[1].id - labels[0].id < 3 { labels.removeFirst() }
+        return labels
+    }
+
+    /// 与 GitHub 一样只标周一、周三、周五。
+    private var weekdayLabels: [AxisLabel] {
+        let calendar = Calendar.current
+        return year.days.prefix(7).compactMap { day in
+            [2, 4, 6].contains(calendar.component(.weekday, from: day.date))
+                ? AxisLabel(id: day.row, text: day.date.formatted(StatsFormat.dateStyle.weekday(.abbreviated)))
+                : nil
+        }
+    }
+}
+
+/// 按提议的宽度决定高度的容器：热力图的高度取决于格子大小，而格子大小取决于宽度。
+private struct WidthDrivenLayout: Layout {
+    let height: (CGFloat) -> CGFloat
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let proposed = proposal.width ?? 640
+        let width = proposed.isFinite ? proposed : 640
+        return CGSize(width: width, height: height(width))
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        for subview in subviews {
+            subview.place(at: bounds.origin, proposal: ProposedViewSize(bounds.size))
+        }
     }
 }
 

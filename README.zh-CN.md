@@ -10,7 +10,7 @@
 - **懂上下文**：每次提问都会附上整份课件的文字、当前页码、选中内容和当前页截图。
 - **多种提问方式**：讲解本页 · 对选中内容解释 / 翻译 / 举例 · 自由提问 · 翻页自动讲解。
 - **完整渲染**：Markdown、LaTeX 公式、代码、表格、SVG、Mermaid、行内 HTML。点按图表可放大预览（捏合或 ⌘ 滚轮缩放、拖动平移），并可拷贝或存储为 PNG。
-- **学习统计**：按天、课件和模型统计阅读时长、阅读页数、讲解与提问次数和 Token 用量（7 天 / 30 天 / 全部），已有对话会自动计入。
+- **学习统计**：按天、课件和模型统计阅读时长、阅读页数、讲解与提问次数和 Token 用量（7 天 / 30 天 / 全部），并以 GitHub 式热力图展示过去一年；已有对话会自动计入。
 - **自定义快捷键**：在「设置 → 快捷键」中修改所有菜单命令的快捷键。
 - **兼容任意 OpenAI 格式接口**，针对 DeepSeek 优化（`deepseek-flash` 支持识图，`deepseek-v4-pro`，可开关深度思考）。
 - 中英文界面、浅色 / 深色模式，原生应用约 7 MB。
@@ -23,7 +23,7 @@
 
 ## 构建
 
-直接使用：从 [v1.2 发布页](https://github.com/XYoungSky/PPTReader/releases/tag/v1.2) 下载 `PPTReader-v1.2-macOS-arm64.zip`，解压后将 `PPTReader.app` 移入「应用程序」。此安装包需要 Apple Silicon Mac 和 macOS 14 及以上版本。应用采用本地临时签名，未经 Apple 公证，首次打开可能被 macOS 拦截。
+直接使用：从 [v1.3 发布页](https://github.com/XYoungSky/PPTReader/releases/tag/v1.3) 下载 `PPTReader-v1.3-macOS-arm64.zip`，解压后将 `PPTReader.app` 移入「应用程序」。此安装包需要 Apple Silicon Mac 和 macOS 14 及以上版本。应用采用本地临时签名，未经 Apple 公证，首次打开可能被 macOS 拦截。
 
 从源码构建：
 

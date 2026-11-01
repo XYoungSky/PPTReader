@@ -807,7 +807,7 @@
   function emptyContent() {
     const meta = state.meta;
     if (!meta.hasDocument) {
-      return `<div class="empty-icon">${ICONS.auto}</div><h2>${t('AI 讲解', 'AI Tutor')}</h2><p>${t('打开一个课件开始', 'Open a deck to start')}</p>`;
+      return `<div class="empty-icon">${ICONS.auto}</div><p>${t('打开一个课件开始', 'Open a deck to start')}</p>`;
     }
     return (
       `<div class="empty-icon">${ICONS.auto}</div>` +

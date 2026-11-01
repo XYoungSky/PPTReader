@@ -10,7 +10,7 @@ A lightweight macOS app for studying course slides with an AI tutor that has rea
 - **Context-aware** — every question includes the whole deck's text, the page you're on, your selection and a screenshot of the page.
 - **Ways to ask** — explain this page · explain / translate / give examples for a selection · free questions · auto-explain on page turn.
 - **Rich answers** — Markdown, LaTeX, code, tables, SVG, Mermaid and inline HTML. Click any diagram to open it in a zoomable preview (pinch / ⌘-scroll, drag to pan) and copy or save it as PNG.
-- **Statistics** — reading time, pages read, questions and token usage by day, deck and model (7 days / 30 days / all time). Earlier chats are counted automatically.
+- **Statistics** — reading time, pages read, questions and token usage by day, deck and model (7 days / 30 days / all time), plus a GitHub-style heatmap of the past year. Earlier chats are counted automatically.
 - **Custom shortcuts** — rebind every menu command in Settings → Shortcuts.
 - **Any OpenAI-compatible API**, tuned for DeepSeek (`deepseek-flash` with vision, `deepseek-v4-pro`, thinking on/off).
 - Chinese / English UI, light and dark mode, ~7 MB native app.
@@ -23,7 +23,7 @@ A lightweight macOS app for studying course slides with an AI tutor that has rea
 
 ## Build
 
-For a prebuilt app, download `PPTReader-v1.2-macOS-arm64.zip` from the [v1.2 release](https://github.com/XYoungSky/PPTReader/releases/tag/v1.2), unzip it, and move `PPTReader.app` to Applications. This build requires an Apple Silicon Mac and macOS 14 or later. It uses an ad-hoc signature and is not notarized by Apple; macOS may block the first launch.
+For a prebuilt app, download `PPTReader-v1.3-macOS-arm64.zip` from the [v1.3 release](https://github.com/XYoungSky/PPTReader/releases/tag/v1.3), unzip it, and move `PPTReader.app` to Applications. This build requires an Apple Silicon Mac and macOS 14 or later. It uses an ad-hoc signature and is not notarized by Apple; macOS may block the first launch.
 
 To build from source:
 
