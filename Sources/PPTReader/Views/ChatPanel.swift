@@ -37,7 +37,7 @@ struct ChatPanel: View {
                     .symbolEffect(.bounce, value: settings.autoExplain)
             }
             .buttonStyle(IconButtonStyle(isOn: settings.autoExplain))
-            .help(tr("翻页自动讲解", "Auto-explain on page turn") + (settings.autoExplain ? " ✓" : ""))
+            .help(tr("翻页自动讲解", "Auto-explain on page turn") + ShortcutStore.shared.hint(.toggleAutoExplain))
             PopMenuButton(trailing: true, style: IconButtonStyle(), items: moreItems) {
                 Label(tr("更多", "More"), systemImage: "ellipsis")
             }
@@ -46,7 +46,7 @@ struct ChatPanel: View {
                 Label(tr("隐藏", "Hide"), systemImage: "sidebar.right")
             }
             .buttonStyle(IconButtonStyle())
-            .help(tr("隐藏 AI 面板", "Hide AI panel") + " ⌥⌘0")
+            .help(tr("隐藏 AI 面板", "Hide AI panel") + ShortcutStore.shared.hint(.toggleChat))
         }
         .padding(.horizontal, 10)
         .frame(height: Theme.barHeight)
@@ -66,6 +66,7 @@ struct ChatPanel: View {
             PopMenuItem(tr("衬线", "Serif"), checked: settings.chatSerif) { settings.chatSerif = true },
             .separator,
             PopMenuItem(tr("清空对话…", "Clear Chat…"), icon: "trash", destructive: true, enabled: model.chat.hasMessages) { confirmClear() },
+            PopMenuItem(tr("学习统计", "Statistics"), icon: "chart.bar.xaxis", shortcut: ShortcutStore.shared.label(for: .statistics)) { StatsWindow.show() },
             PopMenuItem(tr("设置…", "Settings…"), icon: "gearshape", shortcut: "⌘,") { SettingsWindow.show() },
         ]
         return items
@@ -168,7 +169,7 @@ private struct Composer: View {
                 }
                 .buttonStyle(OutlineButtonStyle())
                 .disabled(busy)
-                .help("⌘E")
+                .help(tr("讲解本页", "Explain page") + ShortcutStore.shared.hint(.explainPage))
 
                 PopMenuButton(style: OutlineButtonStyle()) {
                     [QuickAction.summary, .outline, .quiz].map { action in
@@ -195,7 +196,7 @@ private struct Composer: View {
                             .symbolEffect(.bounce, value: model.settings.thinking)
                     }
                     .buttonStyle(OutlineButtonStyle(isOn: model.settings.thinking))
-                    .help(tr("深度思考：更准确，但更慢", "Deep thinking: more accurate, slower"))
+                    .help(tr("深度思考", "Deep thinking") + ShortcutStore.shared.hint(.toggleThinking))
                 }
                 sendButton
             }
@@ -242,7 +243,7 @@ private struct Composer: View {
         }
         .buttonStyle(PressStyle())
         .disabled(!active)
-        .help(streaming ? tr("停止", "Stop") + " ⌘." : tr("发送 ↩︎ · 换行 ⌥↩︎", "Send ↩︎ · New line ⌥↩︎"))
+        .help(streaming ? tr("停止", "Stop") + ShortcutStore.shared.hint(.stop) : tr("发送 ↩︎ · 换行 ⌥↩︎", "Send ↩︎ · New line ⌥↩︎"))
         .animation(Motion.content, value: active)
         .animation(Motion.content, value: streaming)
     }

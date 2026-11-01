@@ -75,16 +75,16 @@ struct ReaderPane: View {
         }
         let page = reader.currentPage
         return [
-            PopMenuItem(tr("讲解第 \(page) 页", "Explain Page \(page)"), icon: "sparkles", shortcut: "⌘E", enabled: !model.chat.isStreaming) {
+            PopMenuItem(tr("讲解第 \(page) 页", "Explain Page \(page)"), icon: "sparkles", shortcut: ShortcutStore.shared.label(for: .explainPage), enabled: !model.chat.isStreaming) {
                 model.chat.perform(.explainPage(auto: false))
             },
             PopMenuItem(tr("拷贝本页文字", "Copy Page Text"), icon: "doc.on.doc") {
                 copy(reader.text?.text(ofPage: page) ?? reader.document.page(at: page - 1)?.string ?? "")
             },
             .separator,
-            PopMenuItem(tr("放大", "Zoom In"), icon: "plus.magnifyingglass", shortcut: "⌘=") { reader.pdf.zoomIn() },
-            PopMenuItem(tr("缩小", "Zoom Out"), icon: "minus.magnifyingglass", shortcut: "⌘-") { reader.pdf.zoomOut() },
-            PopMenuItem(tr("适合窗口", "Fit to Window"), icon: "arrow.up.left.and.down.right.magnifyingglass", shortcut: "⌘0") { reader.pdf.fitToWindow() },
+            PopMenuItem(tr("放大", "Zoom In"), icon: "plus.magnifyingglass", shortcut: ShortcutStore.shared.label(for: .zoomIn)) { reader.pdf.zoomIn() },
+            PopMenuItem(tr("缩小", "Zoom Out"), icon: "minus.magnifyingglass", shortcut: ShortcutStore.shared.label(for: .zoomOut)) { reader.pdf.zoomOut() },
+            PopMenuItem(tr("适合窗口", "Fit to Window"), icon: "arrow.up.left.and.down.right.magnifyingglass", shortcut: ShortcutStore.shared.label(for: .fitToWindow)) { reader.pdf.fitToWindow() },
             .separator,
             PopMenuItem(tr("连续滚动", "Continuous"), icon: "rectangle.split.1x2", checked: reader.continuousScroll) { setContinuous(true) },
             PopMenuItem(tr("单页", "Single Page"), icon: "rectangle", checked: !reader.continuousScroll) { setContinuous(false) },
@@ -157,7 +157,7 @@ struct ReaderHeader: View {
                     Label(tr("显示侧边栏", "Show Sidebar"), systemImage: "sidebar.left")
                 }
                 .buttonStyle(IconButtonStyle())
-                .help(tr("显示侧边栏", "Show sidebar") + " ⌃⌘S")
+                .help(tr("显示侧边栏", "Show sidebar") + ShortcutStore.shared.hint(.toggleSidebar))
                 .padding(.trailing, 6)
             }
 
@@ -179,7 +179,7 @@ struct ReaderHeader: View {
                         .contentTransition(.symbolEffect(.replace))
                 }
                 .buttonStyle(IconButtonStyle())
-                .help(reader.continuousScroll ? tr("连续滚动", "Continuous") : tr("单页", "Single page"))
+                .help((reader.continuousScroll ? tr("连续滚动", "Continuous") : tr("单页", "Single page")) + ShortcutStore.shared.hint(.toggleLayout))
 
                 if !showsChat {
                     Button {
@@ -188,7 +188,7 @@ struct ReaderHeader: View {
                         Label(tr("AI 讲解", "AI"), systemImage: "sparkles")
                     }
                     .buttonStyle(IconButtonStyle(isOn: true))
-                    .help(tr("显示 AI 面板", "Show AI panel") + " ⌥⌘0")
+                    .help(tr("显示 AI 面板", "Show AI panel") + ShortcutStore.shared.hint(.toggleChat))
                 }
             }
         }
@@ -252,7 +252,7 @@ struct ReaderHeader: View {
             Button { reader.pdf.previous() } label: { Label(tr("上一页", "Previous"), systemImage: "chevron.left") }
                 .buttonStyle(IconButtonStyle(size: 26))
                 .disabled(reader.currentPage <= 1)
-                .help(tr("上一页", "Previous page"))
+                .help(tr("上一页", "Previous page") + ShortcutStore.shared.hint(.previousPage))
 
             // 点按页码直接原地输入跳转
             Group {
@@ -300,7 +300,7 @@ struct ReaderHeader: View {
             Button { reader.pdf.next() } label: { Label(tr("下一页", "Next"), systemImage: "chevron.right") }
                 .buttonStyle(IconButtonStyle(size: 26))
                 .disabled(reader.currentPage >= reader.pageCount)
-                .help(tr("下一页", "Next page"))
+                .help(tr("下一页", "Next page") + ShortcutStore.shared.hint(.nextPage))
         }
     }
 
@@ -308,7 +308,7 @@ struct ReaderHeader: View {
         HStack(spacing: 0) {
             Button { reader.pdf.zoomOut() } label: { Label(tr("缩小", "Zoom Out"), systemImage: "minus") }
                 .buttonStyle(IconButtonStyle(size: 26))
-                .help(tr("缩小", "Zoom out") + " ⌘-")
+                .help(tr("缩小", "Zoom out") + ShortcutStore.shared.hint(.zoomOut))
             Button { reader.pdf.fitToWindow() } label: {
                 Text("\(Int((reader.scale * 100).rounded()))%")
                     .monospacedDigit()
@@ -317,10 +317,10 @@ struct ReaderHeader: View {
                     .frame(minWidth: 38)
             }
             .buttonStyle(TextButtonStyle())
-            .help(tr("适合窗口", "Fit to window") + " ⌘0")
+            .help(tr("适合窗口", "Fit to window") + ShortcutStore.shared.hint(.fitToWindow))
             Button { reader.pdf.zoomIn() } label: { Label(tr("放大", "Zoom In"), systemImage: "plus") }
                 .buttonStyle(IconButtonStyle(size: 26))
-                .help(tr("放大", "Zoom in") + " ⌘=")
+                .help(tr("放大", "Zoom in") + ShortcutStore.shared.hint(.zoomIn))
         }
     }
 

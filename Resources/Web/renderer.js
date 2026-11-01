@@ -217,7 +217,8 @@
     return html;
   }
 
-  const ICON_COPY = '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="5.25" y="5.25" width="8.25" height="8.25" rx="1.75" fill="none" stroke="currentColor" stroke-width="1.25"/><path d="M10.5 2.75H4.25a1.5 1.5 0 0 0-1.5 1.5v6.25" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/></svg>';
+  const ICON_COPY = '<svg class="ui-icon" viewBox="0 0 16 16" aria-hidden="true"><rect x="5.25" y="5.25" width="8.25" height="8.25" rx="1.75" fill="none" stroke="currentColor" stroke-width="1.25"/><path d="M10.5 2.75H4.25a1.5 1.5 0 0 0-1.5 1.5v6.25" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/></svg>';
+  const ICON_EXPAND = '<svg class="ui-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M9.5 2.75h3.75v3.75M6.5 13.25H2.75V9.5M13.25 2.75 9 7M2.75 13.25 7 9" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>';
   const ICON_CHECK = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 8.5 6.5 11.5 12.5 4.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 
   const LANG_LABELS = { js: 'javascript', ts: 'typescript', py: 'python', sh: 'shell', zsh: 'shell', bash: 'shell', yml: 'yaml', md: 'markdown', tex: 'latex' };
@@ -233,6 +234,10 @@
       `<pre><code class="hljs">${highlight(code, lang)}</code></pre></div>`;
   }
 
+  function expandButton() {
+    return `<button type="button" class="icon-btn figure-expand" data-action="expand-figure" title="${t('放大查看', 'Enlarge')}" aria-label="${t('放大查看', 'Enlarge')}">${ICON_EXPAND}</button>`;
+  }
+
   md.renderer.rules.fence = (tokens, idx) => {
     const token = tokens[idx];
     const info = token.info ? md.utils.unescapeAll(token.info).trim() : '';
@@ -240,7 +245,7 @@
     const code = token.content.replace(/\n$/, '');
 
     if (lang === 'mermaid') {
-      return `<div class="mermaid-block" data-state="pending"><div class="mermaid-canvas"></div>` +
+      return `<div class="mermaid-block" data-state="pending"><div class="mermaid-canvas"></div>${expandButton()}` +
         `<details class="figure-source"><summary>${t('源码', 'Source')}</summary>${codeBlock(code, 'mermaid')}</details></div>`;
     }
     const looksLikeSvg = /^\s*(<\?xml[^>]*>\s*)?<svg[\s>]/i.test(code);
@@ -249,7 +254,7 @@
       const canvas = complete
         ? `<div class="svg-canvas">${code.replace(/^\s*<\?xml[^>]*>/i, '')}</div>`
         : `<div class="svg-canvas pending"><span class="figure-hint">${t('正在绘制…', 'Drawing…')}</span></div>`;
-      return `<figure class="svg-figure">${canvas}` +
+      return `<figure class="svg-figure">${canvas}${complete ? expandButton() : ''}` +
         `<details class="figure-source"><summary>${t('源码', 'Source')}</summary>${codeBlock(code, 'xml')}</details></figure>`;
     }
     return codeBlock(code, lang, { preview: lang === 'html' });
@@ -343,6 +348,11 @@
   function isolateSvgs(root) {
     for (const svg of Array.from(root.querySelectorAll('svg'))) {
       if (svg.parentElement && svg.parentElement.closest('svg')) continue;
+      // 代码块、图表按钮上的界面图标保持内联，才能跟随文字颜色
+      if (svg.classList.contains('ui-icon') && svg.parentElement && svg.parentElement.matches('button[data-action]')) {
+        svg.querySelectorAll('style').forEach((style) => style.remove());
+        continue;
+      }
       if (!svg.getAttribute('xmlns')) svg.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
       const width = svg.getAttribute('width');
       const viewBox = (svg.getAttribute('viewBox') || '').trim().split(/[\s,]+/).map(Number);
@@ -608,11 +618,12 @@
     // 底部操作
     const foot = el.querySelector('.msg-foot');
     if (!m.streaming && content.trim()) {
-      const usage = m.usage ? [
-        `${t('输入', 'In')} ${formatTokens(m.usage.prompt)}`,
-        m.usage.cacheHit ? `${t('缓存', 'Cached')} ${formatTokens(m.usage.cacheHit)}` : '',
-        `${t('输出', 'Out')} ${formatTokens(m.usage.completion)}`,
-      ].filter(Boolean).join(' · ') : '';
+      const usage = [
+        m.model ? esc(m.model) : '',
+        m.usage ? `${t('输入', 'In')} ${formatTokens(m.usage.prompt)}` : '',
+        m.usage && m.usage.cacheHit ? `${t('缓存', 'Cached')} ${formatTokens(m.usage.cacheHit)}` : '',
+        m.usage ? `${t('输出', 'Out')} ${formatTokens(m.usage.completion)}` : '',
+      ].filter(Boolean).join(' · ');
       foot.hidden = false;
       foot.innerHTML =
         `<button type="button" class="icon-btn" data-action="copy-message" title="${t('复制', 'Copy')}">${ICONS.copy}</button>` +
@@ -801,11 +812,53 @@
     return (
       `<div class="empty-icon">${ICONS.auto}</div>` +
       `<h2>${t('今天想弄懂什么？', 'What shall we learn?')}</h2>` +
-      `<p>${t(`已读完全部 ${meta.pageCount} 页`, `Read all ${meta.pageCount} pages`)}</p>` +
       '<div class="suggestions">' +
       SUGGESTIONS.map((s) => `<button type="button" class="suggestion" data-action="quick" data-quick="${s.action}">${suggestionIcon(s.icon)}${s.title()}</button>`).join('') +
       '</div>' +
       '');
+  }
+
+  // ---------------------------------------------------------------- 图表放大
+
+  /** 从 SVG 源码读出自然尺寸：优先 width/height（像素），否则用 viewBox。 */
+  function svgSize(svg) {
+    const viewBox = (svg.getAttribute('viewBox') || '').trim().split(/[\s,]+/).map(Number);
+    const px = (v) => (v && /^\s*[\d.]+\s*(px)?\s*$/.test(v) ? parseFloat(v) : 0);
+    let width = px(svg.getAttribute('width'));
+    let height = px(svg.getAttribute('height'));
+    if (viewBox.length === 4 && viewBox[2] > 0 && viewBox[3] > 0) {
+      if (!width && !height) { width = viewBox[2]; height = viewBox[3]; }
+      else if (!height) height = width * viewBox[3] / viewBox[2];
+      else if (!width) width = height * viewBox[2] / viewBox[3];
+    }
+    return { width: width || 0, height: height || 0 };
+  }
+
+  function figurePayload(el) {
+    const block = el.closest('.svg-figure, .mermaid-block');
+    if (block && block.classList.contains('mermaid-block')) {
+      const svg = block.dataset.state === 'done' && block.querySelector('.mermaid-canvas > svg');
+      if (!svg) return null;
+      return Object.assign({ kind: 'mermaid', markup: svg.outerHTML }, svgSize(svg));
+    }
+    const img = el.tagName === 'IMG' ? el : el.querySelector('img');
+    if (!img || !img.complete) return null;
+    if (img.classList.contains('svg-image')) {
+      const comma = img.src.indexOf(',');
+      let markup = '';
+      try { markup = decodeURIComponent(img.src.slice(comma + 1)); } catch (_) { return null; }
+      const doc = new DOMParser().parseFromString(markup, 'image/svg+xml');
+      const svg = doc.documentElement;
+      if (!svg || svg.nodeName.toLowerCase() !== 'svg') return null;
+      return Object.assign({ kind: 'svg', src: img.src }, svgSize(svg));
+    }
+    return { kind: 'image', src: img.currentSrc || img.src, width: img.naturalWidth, height: img.naturalHeight };
+  }
+
+  function openFigure(el) {
+    const payload = el && figurePayload(el);
+    if (!payload) return;
+    post(Object.assign({ type: 'figure', title: state.meta.title || '', lang: state.meta.lang || 'zh', dark: prefersDark.matches }, payload));
   }
 
   // ---------------------------------------------------------------- 交互
@@ -833,7 +886,11 @@
     }
 
     const btn = e.target.closest('[data-action]');
-    if (!btn) return;
+    if (!btn) {
+      const figure = e.target.closest('.svg-canvas, .mermaid-block[data-state="done"] .mermaid-canvas, .md img');
+      if (figure && window.getSelection().isCollapsed) openFigure(figure);
+      return;
+    }
     const article = btn.closest('.msg');
     const id = article && article.dataset.id;
     switch (btn.dataset.action) {
@@ -865,6 +922,9 @@
         }
         break;
       }
+      case 'expand-figure':
+        openFigure(btn.closest('.svg-figure, .mermaid-block'));
+        break;
       case 'retry':
         post({ type: 'retry', id });
         break;

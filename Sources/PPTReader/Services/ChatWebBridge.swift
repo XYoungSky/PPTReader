@@ -9,6 +9,8 @@ enum WebEvent {
     case regenerate(UUID)
     case quick(QuickAction)
     case contextMenu(WebContextInfo)
+    /// 点按图表放大查看。
+    case figure([String: Any])
 }
 
 /// 讲解区右键时网页回传的信息。
@@ -93,6 +95,8 @@ final class ChatWebBridge: NSObject {
                 isAssistant: dict["role"] as? String == "assistant",
                 page: dict["page"] as? Int
             )))
+        case "figure":
+            onEvent?(.figure(dict))
         case "log":
             NSLog("PPTReader web: \(dict["message"] ?? "")")
         default:

@@ -20,6 +20,7 @@ enum ReaderPhase {
 final class AppModel {
     let settings = AppSettings()
     let library = CourseLibrary()
+    let stats = StatsStore()
     let chat: ChatController
     private(set) var phase: ReaderPhase = .empty
 
@@ -28,11 +29,14 @@ final class AppModel {
     }
 
     @ObservationIgnored private let store = ChatStore()
+    @ObservationIgnored private let tracker: StudyTracker
     @ObservationIgnored private var loadTask: Task<Void, Never>?
     @ObservationIgnored private static let lastFileKey = "library.lastFile"
 
     init() {
-        chat = ChatController(settings: settings, store: store)
+        chat = ChatController(settings: settings, store: store, stats: stats)
+        tracker = StudyTracker(stats: stats)
+        tracker.isBusy = { [weak chat] in chat?.isStreaming ?? false }
         if let folder = library.recentFolders.first {
             library.open(folder)
             if let last = UserDefaults.standard.string(forKey: Self.lastFileKey),
@@ -85,6 +89,7 @@ final class AppModel {
         UserDefaults.standard.set(url.path, forKey: Self.lastFileKey)
         loadTask?.cancel()
         reader?.close()
+        tracker.close()
 
         let name = url.lastPathComponent
         loadTask = Task { [weak self] in
@@ -112,15 +117,29 @@ final class AppModel {
                 let thread = self.store.load(for: url)
                 let reader = ReaderModel(sourceURL: url, pdfURL: pdfURL, kind: kind,
                                          document: document, initialPage: thread.lastPage ?? 1)
-                reader.onPageChange = { [weak self] page in self?.chat.pageDidChange(page) }
+                reader.onPageChange = { [weak self] page in
+                    self?.chat.pageDidChange(page)
+                    self?.tracker.pageViewed(page)
+                }
                 self.phase = .ready(reader)
                 self.chat.attach(reader: reader, thread: thread)
+                self.tracker.open(deck: thread.sourcePath, page: reader.currentPage)
                 reader.startTextExtraction()
             } catch {
                 guard !Task.isCancelled else { return }
                 self.chat.detach()
                 self.phase = .failed(name: name, message: error.localizedDescription)
             }
+        }
+    }
+
+    /// 从统计窗口等处打开某份课件。
+    func openDeck(_ url: URL) {
+        guard FileManager.default.fileExists(atPath: url.path) else { return }
+        if let root = library.rootURL, url.path.hasPrefix(root.path + "/") {
+            selectedFile = url
+        } else {
+            openFolder(url)
         }
     }
 

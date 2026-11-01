@@ -33,7 +33,7 @@ enum SettingsWindow {
 }
 
 enum SettingsSection: String, CaseIterable, Identifiable {
-    case model, explain, explanationStyle, appearance, data
+    case model, explain, explanationStyle, appearance, shortcuts, data
 
     var id: String { rawValue }
 
@@ -43,6 +43,7 @@ enum SettingsSection: String, CaseIterable, Identifiable {
         case .explain: tr("讲解", "Tutor")
         case .explanationStyle: tr("讲解风格", "Explanation style")
         case .appearance: tr("外观", "Appearance")
+        case .shortcuts: tr("快捷键", "Shortcuts")
         case .data: tr("数据", "Data")
         }
     }
@@ -53,6 +54,7 @@ enum SettingsSection: String, CaseIterable, Identifiable {
         case .explain: "sparkles"
         case .explanationStyle: "slider.horizontal.3"
         case .appearance: "paintbrush"
+        case .shortcuts: "keyboard"
         case .data: "externaldrive"
         }
     }
@@ -76,6 +78,7 @@ struct SettingsView: View {
                         case .explain: ExplainSettings()
                         case .explanationStyle: ExplanationStyleSettings()
                         case .appearance: AppearanceSettings()
+                        case .shortcuts: ShortcutSettings()
                         case .data: DataSettings()
                         }
                     }
@@ -92,6 +95,8 @@ struct SettingsView: View {
         }
         .frame(width: 760, height: 540)
         .ignoresSafeArea()
+        .onChange(of: section) { ShortcutStore.shared.endRecording() }
+        .onDisappear { ShortcutStore.shared.endRecording() }
     }
 
     private var sidebar: some View {
@@ -103,7 +108,7 @@ struct SettingsView: View {
                 }
             }
             Spacer()
-            Text("PPTReader 1.1")
+            Text("PPTReader \(AppInfo.version)")
                 .font(.system(size: 11))
                 .foregroundStyle(Theme.text3)
                 .padding(.leading, 10)
@@ -162,7 +167,7 @@ private struct ModelSettings: View {
     var body: some View {
         @Bindable var settings = settings
         VStack(alignment: .leading, spacing: 22) {
-            SettingsCard(footer: tr("兼容 OpenAI 格式。Key 保存在系统钥匙串。", "OpenAI-compatible. The key is stored in the Keychain.")) {
+            SettingsCard {
                 SettingsRow(title: tr("API 地址", "Base URL")) {
                     ThemedField(text: $settings.baseURL, placeholder: AppSettings.defaultBaseURL, monospaced: true)
                         .frame(width: 300)
@@ -172,7 +177,7 @@ private struct ModelSettings: View {
                         .frame(width: 300)
                         .onChange(of: keyDraft) { _, value in settings.setAPIKey(value) }
                 }
-                SettingsRow(title: tr("模型", "Model"), detail: modelDetail, divider: false) {
+                SettingsRow(title: tr("模型", "Model"), divider: false) {
                     HStack(spacing: 6) {
                         ThemedField(text: $settings.model, placeholder: tr("输入或选择模型", "Enter or choose a model"), monospaced: true)
                         PopMenuButton(trailing: true, style: IconButtonStyle(size: 30)) {
@@ -196,7 +201,7 @@ private struct ModelSettings: View {
                             .labelsHidden()
                     }
                 }
-                SettingsRow(title: tr("测试连接", "Test connection"), detail: testDetail, divider: false) {
+                SettingsRow(title: tr("测试连接", "Test connection"), detail: testDetail, detailColor: testFailed ? Theme.danger : Theme.text3, divider: false) {
                     Button(testState == .testing ? tr("测试中…", "Testing…") : tr("测试", "Test")) { Task { await test() } }
                         .buttonStyle(OutlineButtonStyle())
                         .disabled(testState == .testing)
@@ -206,14 +211,6 @@ private struct ModelSettings: View {
         .onAppear { keyDraft = settings.apiKey }
     }
 
-    private var modelDetail: String? {
-        switch settings.effectiveModel {
-        case "deepseek-flash": tr("快速，支持识图", "Fast, sees images")
-        case "deepseek-v4-pro": tr("更强，不支持识图", "Stronger, text only")
-        default: nil
-        }
-    }
-
     private var testDetail: String? {
         switch testState {
         case .idle: nil
@@ -221,6 +218,11 @@ private struct ModelSettings: View {
         case .success(let count): tr("✓ 可用，\(count) 个模型", "✓ Connected, \(count) models")
         case .failure(let message): "✕ \(message)"
         }
+    }
+
+    private var testFailed: Bool {
+        if case .failure = testState { return true }
+        return false
     }
 
     private func test() async {
@@ -284,37 +286,22 @@ private struct ExplanationStyleSettings: View {
 
     var body: some View {
         @Bindable var settings = settings
-        VStack(alignment: .leading, spacing: 22) {
-            SettingsCard(footer: tr("控制回答的篇幅与展开程度。简洁模式保留重点，详细模式展开推导与步骤。",
-                                    "Choose how much detail to include, from key points to step-by-step explanations.")) {
-                SettingsRow(title: tr("回答详略", "Answer detail"), divider: false) {
-                    SegmentedPicker(selection: $settings.explanationStyle.detail,
-                                    options: ExplanationStyle.Detail.allCases.map { ($0, $0.title) })
-                        .accessibilityLabel(tr("回答详略", "Answer detail"))
-                }
+        SettingsCard {
+            SettingsRow(title: tr("回答详略", "Answer detail")) {
+                SegmentedPicker(selection: $settings.explanationStyle.detail,
+                                options: ExplanationStyle.Detail.allCases.map { ($0, $0.title) })
+                    .accessibilityLabel(tr("回答详略", "Answer detail"))
             }
-            SettingsCard(footer: tr("选择图表的使用频率。多用 SVG 时，会优先用图示解释关系、流程与结构。",
-                                    "Choose how often to use visuals. More SVG favors diagrams for relationships, processes and structures.")) {
-                SettingsRow(title: tr("图表使用", "Diagrams"), divider: false) {
-                    SegmentedPicker(selection: $settings.explanationStyle.diagrams,
-                                    options: ExplanationStyle.Diagrams.allCases.map { ($0, $0.title) })
-                        .accessibilityLabel(tr("图表使用", "Diagrams"))
-                }
+            SettingsRow(title: tr("图表使用", "Diagrams")) {
+                SegmentedPicker(selection: $settings.explanationStyle.diagrams,
+                                options: ExplanationStyle.Diagrams.allCases.map { ($0, $0.title) })
+                    .accessibilityLabel(tr("图表使用", "Diagrams"))
             }
-            SettingsCard(footer: tr("选择是否补充例题。每个知识点模式会附上题目、解题步骤与答案。",
-                                    "Choose when to add worked examples, including the question, solution steps and answer.")) {
-                SettingsRow(title: tr("例题数量", "Examples"), divider: false) {
-                    SegmentedPicker(selection: $settings.explanationStyle.examples,
-                                    options: ExplanationStyle.Examples.allCases.map { ($0, $0.title) })
-                        .accessibilityLabel(tr("例题数量", "Examples"))
-                }
+            SettingsRow(title: tr("例题数量", "Examples"), divider: false) {
+                SegmentedPicker(selection: $settings.explanationStyle.examples,
+                                options: ExplanationStyle.Examples.allCases.map { ($0, $0.title) })
+                    .accessibilityLabel(tr("例题数量", "Examples"))
             }
-            Text(tr("自动保存，从下一次回答起生效。你在提问中的明确要求优先。",
-                    "Saved automatically. Applies to the next answer; explicit requests in your question take priority."))
-                .font(.system(size: 11.5))
-                .foregroundStyle(Theme.text2)
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.horizontal, 4)
         }
     }
 }
@@ -345,32 +332,146 @@ private struct AppearanceSettings: View {
                     SegmentedPicker(selection: $settings.chatSerif, options: [(false, tr("无衬线", "Sans")), (true, tr("衬线", "Serif"))])
                 }
             }
-            Text(tr("傅里叶变换把信号从时域转换到频域：任何周期信号都可以分解为一组正弦波的叠加。",
-                    "The Fourier transform moves a signal from time to frequency: any periodic signal is a sum of sine waves."))
-                .font(.system(size: settings.chatFontSize, design: settings.chatSerif ? .serif : .default))
-                .foregroundStyle(Theme.text)
-                .lineSpacing(settings.chatFontSize * 0.6)
-                .padding(16)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Theme.surface))
-                .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Theme.border))
-                .animation(Motion.content, value: settings.chatFontSize)
-                .animation(Motion.content, value: settings.chatSerif)
         }
+    }
+}
+
+// MARK: - 快捷键
+
+private struct ShortcutSettings: View {
+    var body: some View {
+        let store = ShortcutStore.shared
+        VStack(alignment: .leading, spacing: 22) {
+            ForEach(ShortcutAction.Group.allCases) { group in
+                let actions = ShortcutAction.allCases.filter { $0.group == group }
+                SettingsCard(title: group.title) {
+                    ForEach(actions) { action in
+                        let feedback = store.feedback?.action == action ? store.feedback?.value : nil
+                        SettingsRow(title: action.title, detail: feedback?.text,
+                                    detailColor: feedback?.isError == true ? Theme.danger : Theme.text3,
+                                    divider: action != actions.last) {
+                            ShortcutRecorder(action: action)
+                        }
+                    }
+                }
+            }
+            HStack {
+                Spacer()
+                Button(tr("全部恢复默认", "Restore Defaults")) {
+                    withAnimation(Motion.content) { store.resetAll() }
+                }
+                .buttonStyle(OutlineButtonStyle())
+                .disabled(!store.hasModifications)
+            }
+        }
+        .animation(Motion.content, value: store.feedback?.value)
+    }
+}
+
+/// 点按后录制下一次按下的组合键；⌫ 清除，esc 取消。
+private struct ShortcutRecorder: View {
+    let action: ShortcutAction
+    @ViewState private var hovering = false
+
+    var body: some View {
+        let store = ShortcutStore.shared
+        let recording = store.recording == action
+        let combo = store.combo(for: action)
+        HStack(spacing: 4) {
+            if store.isModified(action) && !recording {
+                Button {
+                    withAnimation(Motion.content) { store.reset(action) }
+                } label: {
+                    Label(tr("恢复默认", "Restore default"), systemImage: "arrow.uturn.backward")
+                }
+                .buttonStyle(IconButtonStyle(size: 24))
+                .help(tr("恢复默认", "Restore default") + (action.defaultCombo.map { "：" + $0.display } ?? ""))
+                .transition(.opacity)
+            }
+            Button {
+                store.toggleRecording(action)
+            } label: {
+                pill(recording: recording, combo: combo, held: store.heldModifiers)
+            }
+            .buttonStyle(.plain)
+            .overlay(alignment: .trailing) {
+                if hovering && !recording && combo != nil {
+                    Button {
+                        withAnimation(Motion.content) { _ = store.set(nil, for: action) }
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 12))
+                            .foregroundStyle(Theme.text3)
+                            .frame(width: 22, height: 26)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .help(tr("清除", "Clear"))
+                    .transition(.opacity)
+                }
+            }
+            .onHover { hovering = $0 }
+            .help(recording ? tr("⌫ 清除 · esc 取消", "⌫ clear · esc cancel") : tr("点按以录制", "Click to record"))
+        }
+        .animation(Motion.hover, value: hovering)
+        .animation(Motion.content, value: recording)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(action.title)
+        .accessibilityValue(combo?.display ?? tr("未设置", "None"))
+    }
+
+    private func pill(recording: Bool, combo: KeyCombo?, held: KeyCombo.Modifiers) -> some View {
+        Group {
+            if recording {
+                Text(held.isEmpty ? tr("按下快捷键", "Type shortcut") : held.symbols + "…")
+                    .foregroundStyle(Theme.accent)
+            } else if let combo {
+                Text(combo.display)
+                    .foregroundStyle(Theme.text)
+            } else {
+                Text(tr("未设置", "None"))
+                    .foregroundStyle(Theme.text3)
+            }
+        }
+        .font(.system(size: 12.5, weight: .medium))
+        .monospacedDigit()
+        .lineLimit(1)
+        .padding(.horizontal, 10)
+        .frame(minWidth: 112, minHeight: 26)
+        .background(
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .fill(recording ? Theme.accent.opacity(0.08) : (hovering ? Theme.selected : Theme.hover))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .strokeBorder(recording ? Theme.accent.opacity(0.7) : .clear, lineWidth: 1)
+        )
+        .contentShape(Rectangle())
     }
 }
 
 // MARK: - 数据
 
 private struct DataSettings: View {
+    @Environment(AppModel.self) private var model
     @ViewState private var cacheSize = ""
     @ViewState private var cleared = false
+    @ViewState private var statsCleared = false
 
     var body: some View {
-        SettingsCard(footer: tr("课程文件夹始终只读。", "Course folders are never modified.")) {
+        SettingsCard {
             SettingsRow(title: tr("对话记录", "Chat history")) {
                 Button(tr("在访达中显示", "Show in Finder")) { NSWorkspace.shared.activateFileViewerSelecting([AppPaths.chats]) }
                     .buttonStyle(OutlineButtonStyle())
+            }
+            SettingsRow(title: tr("学习统计", "Statistics"), detail: statsCleared ? tr("已清除", "Cleared") : nil) {
+                HStack(spacing: 8) {
+                    Button(tr("查看", "View")) { StatsWindow.show() }
+                        .buttonStyle(OutlineButtonStyle())
+                    Button(tr("清除…", "Clear…")) { confirmClearStats() }
+                        .buttonStyle(OutlineButtonStyle())
+                        .disabled(model.stats.log.isEmpty)
+                }
             }
             SettingsRow(title: tr("转换与文字缓存", "Cache"), detail: cleared ? tr("已清除", "Cleared") : cacheSize, divider: false) {
                 Button(tr("清除", "Clear")) {
@@ -383,6 +484,19 @@ private struct DataSettings: View {
             }
         }
         .onAppear(perform: refreshSize)
+    }
+
+    /// 与清空对话一致：在鼠标位置弹出确认菜单。
+    private func confirmClearStats() {
+        let stats = model.stats
+        PopMenu.shared.show([
+            .header(tr("清除后无法恢复", "This can't be undone")),
+            PopMenuItem(tr("清除学习统计", "Clear Statistics"), icon: "trash", destructive: true) {
+                stats.clear()
+                withAnimation(Motion.content) { statsCleared = true }
+            },
+            PopMenuItem(tr("取消", "Cancel"), icon: "xmark") {},
+        ], placement: .at(NSEvent.mouseLocation), in: NSApp.keyWindow, minWidth: 180)
     }
 
     private func refreshSize() {

@@ -14,6 +14,7 @@ enum Theme {
     static let text2 = Color(light: 0x5E5C56, dark: 0xB4B1A7)
     static let text3 = Color(light: 0x9A978E, dark: 0x7C7971)
     static let accent = Color(light: 0xD97757, dark: 0xD97757)
+    static let danger = Color(light: 0xB5432F, dark: 0xF08B76)
 
     static let canvasNSColor = NSColor(light: 0xECEAE3, dark: 0x171716)
     static let borderNSColor = NSColor(light: 0xE3E0D7, dark: 0x3A3936)

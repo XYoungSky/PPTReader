@@ -129,6 +129,7 @@ struct SettingsCard<Content: View>: View {
 struct SettingsRow<Control: View>: View {
     let title: String
     var detail: String?
+    var detailColor: Color = Theme.text3
     var divider = true
     @ViewBuilder let control: Control
 
@@ -142,7 +143,8 @@ struct SettingsRow<Control: View>: View {
                     if let detail {
                         Text(detail)
                             .font(.system(size: 11.5))
-                            .foregroundStyle(Theme.text3)
+                            .foregroundStyle(detailColor)
+                            .transition(.opacity)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }

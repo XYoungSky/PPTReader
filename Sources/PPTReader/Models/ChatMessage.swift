@@ -28,6 +28,8 @@ struct ChatMessage: Codable, Identifiable, Equatable {
     var error: String?
     var stopped = false
     var usage: TokenUsage?
+    /// 生成这条回答的模型（1.2 起记录）。
+    var model: String?
     var createdAt = Date()
 
     var instruction: String { prompt ?? content }

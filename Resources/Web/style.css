@@ -396,6 +396,27 @@ body.is-empty .edge-fade { display: none; }
 
 .svg-canvas.pending, .mermaid-block[data-state="pending"] .mermaid-canvas { background: var(--fill); }
 
+/* 点按图表放大查看 */
+.svg-figure, .mermaid-block { position: relative; }
+.svg-canvas:not(.pending), .mermaid-block[data-state="done"] .mermaid-canvas, .md img { cursor: zoom-in; }
+
+.figure-expand {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  background: var(--jump-bg);
+  border: 1px solid var(--hairline-strong);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  opacity: 0;
+  transform: scale(0.92);
+  transition: opacity 0.15s, transform 0.15s var(--ease-out), background 0.12s, color 0.12s;
+}
+
+.svg-figure:hover .figure-expand, .mermaid-block:hover .figure-expand, .figure-expand:focus-visible { opacity: 1; transform: none; }
+.mermaid-block:not([data-state="done"]) .figure-expand { display: none; }
+.svg-figure .figure-expand { color: #5e5c56; background: #ffffff; border-color: rgba(31, 30, 29, 0.14); }
+.svg-figure .figure-expand:hover { color: #1f1e1d; background: #f3f1ea; }
+
 .figure-hint { color: var(--muted); font-size: 0.86em; }
 .figure-hint.error { color: var(--danger); }
 

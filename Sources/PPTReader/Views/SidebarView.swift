@@ -18,7 +18,7 @@ struct SidebarView: View {
                     Label(tr("隐藏侧边栏", "Hide Sidebar"), systemImage: "sidebar.left")
                 }
                 .buttonStyle(IconButtonStyle())
-                .help(tr("隐藏侧边栏", "Hide sidebar") + " ⌃⌘S")
+                .help(tr("隐藏侧边栏", "Hide sidebar") + ShortcutStore.shared.hint(.toggleSidebar))
             }
             .padding(.horizontal, 10)
             .frame(height: Theme.barHeight)
@@ -94,12 +94,17 @@ struct SidebarView: View {
                 Label(tr("打开文件夹", "Open Folder"), systemImage: "folder.badge.plus")
             }
             .buttonStyle(IconButtonStyle())
-            .help(tr("打开文件夹", "Open folder") + " ⌘O")
+            .help(tr("打开文件夹", "Open folder") + ShortcutStore.shared.hint(.openFolder))
             Button { SettingsWindow.show() } label: {
                 Label(tr("设置", "Settings"), systemImage: "gearshape")
             }
             .buttonStyle(IconButtonStyle())
             .help(tr("设置", "Settings") + " ⌘,")
+            Button { StatsWindow.show() } label: {
+                Label(tr("学习统计", "Statistics"), systemImage: "chart.bar.xaxis")
+            }
+            .buttonStyle(IconButtonStyle())
+            .help(tr("学习统计", "Statistics") + ShortcutStore.shared.hint(.statistics))
             Spacer()
             if model.library.rootURL != nil {
                 Text(tr("\(model.library.fileCount) 个课件", model.library.fileCount == 1 ? "1 file" : "\(model.library.fileCount) files"))
@@ -226,8 +231,8 @@ private struct FolderMenu: View {
             items.append(.separator)
         }
         items += [
-            PopMenuItem(tr("打开其他文件夹…", "Open Folder…"), icon: "folder.badge.plus", shortcut: "⌘O") { model.chooseFolder() },
-            PopMenuItem(tr("刷新", "Refresh"), icon: "arrow.clockwise", shortcut: "⌘R") { model.library.refresh() },
+            PopMenuItem(tr("打开其他文件夹…", "Open Folder…"), icon: "folder.badge.plus", shortcut: ShortcutStore.shared.label(for: .openFolder)) { model.chooseFolder() },
+            PopMenuItem(tr("刷新", "Refresh"), icon: "arrow.clockwise", shortcut: ShortcutStore.shared.label(for: .refreshFiles)) { model.library.refresh() },
             PopMenuItem(tr("在访达中显示", "Show in Finder"), icon: "folder") { NSWorkspace.shared.activateFileViewerSelecting([root]) },
         ]
         return items

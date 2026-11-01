@@ -14,6 +14,7 @@ final class ChatController {
     @ObservationIgnored let web = ChatWebBridge()
     @ObservationIgnored private let settings: AppSettings
     @ObservationIgnored private let store: ChatStore
+    @ObservationIgnored private let stats: StatsStore
     @ObservationIgnored private var messages: [ChatMessage] = []
     @ObservationIgnored private var thread: ChatThread?
     @ObservationIgnored private weak var reader: ReaderModel?
@@ -24,9 +25,10 @@ final class ChatController {
     @ObservationIgnored private var flushPending = false
     @ObservationIgnored private var lastPageSave: Task<Void, Never>?
 
-    init(settings: AppSettings, store: ChatStore) {
+    init(settings: AppSettings, store: ChatStore, stats: StatsStore) {
         self.settings = settings
         self.store = store
+        self.stats = stats
         web.onEvent = { [weak self] event in self?.handle(event) }
     }
 
@@ -80,6 +82,7 @@ final class ChatController {
                 messages.remove(at: index)
             } else {
                 messages[index].stopped = true
+                record(messages[index], at: index)
             }
             persist()
         }
@@ -154,13 +157,14 @@ final class ChatController {
         )
         let payload = PromptBuilder.requestMessages(history: messages, context: context)
 
-        let reply = ChatMessage(role: .assistant, content: "")
+        let config = settings.connection
+        var reply = ChatMessage(role: .assistant, content: "")
+        reply.model = config.model
         streamingID = reply.id
         streamIsAuto = auto
         isStreaming = true
         append(reply)
 
-        let config = settings.connection
         let id = reply.id
         let sentImage = image != nil
         let body = (try? JSONSerialization.data(withJSONObject: payload)) ?? Data("[]".utf8)
@@ -224,8 +228,19 @@ final class ChatController {
             }
             messages[index].error = error.localizedDescription
         }
+        record(messages[index], at: index)
         push(messages[index])
         persist()
+    }
+
+    /// 计入学习统计：只统计有内容的回答。
+    private func record(_ reply: ChatMessage, at index: Int) {
+        guard reply.error == nil, !reply.content.isEmpty, let thread,
+              index > 0, messages[index - 1].role == .user else { return }
+        let question = messages[index - 1]
+        stats.recordReply(deck: thread.sourcePath, page: question.page, model: reply.model,
+                          kind: question.explainsPage != nil ? .explain : .question,
+                          usage: reply.usage, at: reply.createdAt)
     }
 
     // MARK: - 自动讲解
@@ -262,6 +277,8 @@ final class ChatController {
             perform(.quick(action))
         case .contextMenu(let info):
             showContextMenu(info)
+        case .figure(let payload):
+            FigurePreview.shared.show(payload, from: web.webView.window)
         }
     }
 
@@ -365,6 +382,7 @@ final class ChatController {
         ]
         if let reasoning = message.reasoning { dict["reasoning"] = reasoning }
         if let page = message.page { dict["page"] = page }
+        if let model = message.model, !model.isEmpty { dict["model"] = model }
         if let selection = message.selection { dict["selection"] = selection }
         if let error = message.error { dict["error"] = error }
         if let usage = message.usage {
