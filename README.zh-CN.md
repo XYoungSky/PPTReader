@@ -24,7 +24,7 @@
 
 ## 构建
 
-直接使用：从 [v1.4 发布页](https://github.com/XYoungSky/PPTReader/releases/tag/v1.4) 下载 `PPTReader-v1.4-macOS-arm64.zip`，解压后将 `PPTReader.app` 移入「应用程序」。此安装包需要 Apple Silicon Mac 和 macOS 14 及以上版本。应用采用本地临时签名，未经 Apple 公证，首次打开可能被 macOS 拦截。
+直接使用：从 [v1.5 发布页](https://github.com/XYoungSky/PPTReader/releases/tag/v1.5) 下载 `PPTReader-v1.5-macOS-arm64.zip`，解压后将 `PPTReader.app` 移入「应用程序」。此安装包需要 Apple Silicon Mac 和 macOS 14 及以上版本。应用采用本地临时签名，未经 Apple 公证，首次打开可能被 macOS 拦截。
 
 从源码构建：
 

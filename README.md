@@ -24,7 +24,7 @@ A lightweight macOS app for studying course slides with an AI tutor that has rea
 
 ## Build
 
-For a prebuilt app, download `PPTReader-v1.4-macOS-arm64.zip` from the [v1.4 release](https://github.com/XYoungSky/PPTReader/releases/tag/v1.4), unzip it, and move `PPTReader.app` to Applications. This build requires an Apple Silicon Mac and macOS 14 or later. It uses an ad-hoc signature and is not notarized by Apple; macOS may block the first launch.
+For a prebuilt app, download `PPTReader-v1.5-macOS-arm64.zip` from the [v1.5 release](https://github.com/XYoungSky/PPTReader/releases/tag/v1.5), unzip it, and move `PPTReader.app` to Applications. This build requires an Apple Silicon Mac and macOS 14 or later. It uses an ad-hoc signature and is not notarized by Apple; macOS may block the first launch.
 
 To build from source:
 
