@@ -11,6 +11,8 @@ enum APIError: LocalizedError {
     case missingModel
     case invalidURL(String)
     case http(Int, String)
+    /// 用 Kimi Code 会员的 Key 请求了别的地址（通常是开放平台 api.moonshot.cn），被拒绝为 401。
+    case kimiCodeKeyMismatch(String)
     case server(String)
 
     var errorDescription: String? {
@@ -27,6 +29,10 @@ enum APIError: LocalizedError {
                     ? "\n" + tr("Kimi Code 会员订阅的 API 目前只对编程工具开放。可以改用 Kimi 开放平台（按量付费）的 API Key。",
                                 "The Kimi Code membership API is currently limited to coding tools. You can use a Kimi Platform (pay-as-you-go) API key instead.")
                     : "")
+        case .kimiCodeKeyMismatch(let message):
+            "\(Self.hint(for: 401)) (HTTP 401)" + (message.isEmpty ? "" : "\n\(message)") + "\n"
+                + tr("这是 Kimi Code 会员订阅的 Key（sk-kimi- 开头），只能用于 https://api.kimi.com/coding/v1。api.moonshot.cn 是按量付费的 Kimi 开放平台，需要在 platform.moonshot.cn 另外创建 Key。",
+                     "This is a Kimi Code membership key (sk-kimi-…), which only works with https://api.kimi.com/coding/v1. api.moonshot.cn is the pay-as-you-go Kimi Platform and needs its own key from platform.moonshot.cn.")
         case .server(let message):
             tr("服务端错误：", "Server error: ") + message
         }
@@ -117,7 +123,7 @@ enum OpenAIClient {
                             data.append(byte)
                             if data.count > 32_000 { break }
                         }
-                        throw APIError.http(status, errorMessage(from: data))
+                        throw httpError(status, data, config)
                     }
 
                     for try await line in bytes.lines {
@@ -181,6 +187,20 @@ enum OpenAIClient {
         return (lower.contains("api.kimi.com") || lower.contains("api.kimi.ai")) && lower.contains("/coding")
     }
 
+    /// Kimi Code 会员的 Key 以 sk-kimi- 开头，只能配合 Kimi Code 地址使用。
+    static func isKimiCodeKey(_ key: String) -> Bool {
+        key.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("sk-kimi-")
+    }
+
+    /// 把非 2xx 响应转成错误；Kimi Code 的 Key 用错地址时给出明确提示。
+    private static func httpError(_ status: Int, _ data: Data, _ config: ConnectionConfig) -> APIError {
+        let message = errorMessage(from: data)
+        if status == 401, isKimiCodeKey(config.apiKey), !isKimiCode(config.baseURL) {
+            return .kimiCodeKeyMismatch(message)
+        }
+        return .http(status, message)
+    }
+
     private static func parseUsage(_ json: [String: Any]) -> TokenUsage {
         let cached = (json["prompt_cache_hit_tokens"] as? Int)
             ?? ((json["prompt_tokens_details"] as? [String: Any])?["cached_tokens"] as? Int)
@@ -206,7 +226,7 @@ enum OpenAIClient {
         request.timeoutInterval = 20
         let (data, response) = try await session.data(for: request)
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-        guard (200..<300).contains(status) else { throw APIError.http(status, errorMessage(from: data)) }
+        guard (200..<300).contains(status) else { throw httpError(status, data, config) }
         let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
         let models = (json?["data"] as? [[String: Any]])?.compactMap { $0["id"] as? String } ?? []
         return models.sorted()
@@ -235,6 +255,6 @@ enum OpenAIClient {
         ] as [String: Any])
         let (data, response) = try await session.data(for: request)
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-        guard (200..<300).contains(status) else { throw APIError.http(status, errorMessage(from: data)) }
+        guard (200..<300).contains(status) else { throw httpError(status, data, config) }
     }
 }

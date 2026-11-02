@@ -309,6 +309,17 @@ private struct ProviderEditor: View {
                         .frame(width: 300)
                         .onChange(of: keyDraft) { _, value in settings.setAPIKey(value, for: providerID) }
                 }
+                // Kimi Code 会员的 Key 填在了别的地址（常见于开放平台 api.moonshot.cn），请求会返回 401
+                if OpenAIClient.isKimiCodeKey(keyDraft) && !isKimiCode {
+                    SettingsRow(title: tr("这是 Kimi Code 会员的 Key", "This is a Kimi Code membership key"),
+                                detail: tr("只能用于 Kimi Code 地址；开放平台需要在 platform.moonshot.cn 另外创建 Key",
+                                           "It only works with the Kimi Code URL. The Kimi Platform needs its own key from platform.moonshot.cn"),
+                                detailColor: Theme.danger) {
+                        Button(tr("改用 Kimi Code 地址", "Use Kimi Code URL")) { useKimiCode() }
+                            .buttonStyle(OutlineButtonStyle())
+                    }
+                    .transition(.opacity)
+                }
                 SettingsRow(title: tr("模型", "Model"), divider: false) {
                     HStack(spacing: 6) {
                         ThemedField(text: $settings.model, placeholder: tr("输入或选择模型", "Enter or choose a model"), monospaced: true)
@@ -350,7 +361,18 @@ private struct ProviderEditor: View {
                 }
             }
         }
+        .animation(Motion.content, value: OpenAIClient.isKimiCodeKey(keyDraft) && !isKimiCode)
         .onAppear { keyDraft = settings.storedKey(for: providerID) }
+    }
+
+    /// 地址换成 Kimi Code；原来的模型和模型列表属于别的服务商，一并换成 kimi-for-coding。
+    private func useKimiCode() {
+        withAnimation(Motion.content) {
+            settings.activeProvider.baseURL = ProviderPreset.kimiCode.baseURL
+            settings.activeProvider.model = ProviderPreset.kimiCode.model
+            settings.activeProvider.fetchedModels = []
+            testState = .idle
+        }
     }
 
     private var testDetail: String? {
