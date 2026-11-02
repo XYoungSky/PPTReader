@@ -12,7 +12,8 @@
 - **完整渲染**：Markdown、LaTeX 公式、代码、表格、SVG、Mermaid、行内 HTML。点按图表可放大预览（捏合或 ⌘ 滚轮缩放、拖动平移），并可拷贝或存储为 PNG。
 - **学习统计**：按天、课件和模型统计阅读时长、阅读页数、讲解与提问次数和 Token 用量（7 天 / 30 天 / 全部），并以 GitHub 式热力图展示过去一年；已有对话会自动计入。
 - **自定义快捷键**：在「设置 → 快捷键」中修改所有菜单命令的快捷键。
-- **兼容任意 OpenAI 格式接口**，针对 DeepSeek 优化（`deepseek-flash` 支持识图，`deepseek-v4-pro`，可开关深度思考）。
+- **兼容任意 OpenAI 格式接口**，针对 DeepSeek 优化（`deepseek-flash` 支持识图，`deepseek-v4-pro`，可开关深度思考），支持 Kimi Code 会员订阅（可调思考强度）。
+- **多个服务商**：最多保存 5 组接口配置，在设置或 AI 面板的模型菜单中一键切换。
 - 中英文界面、浅色 / 深色模式，原生应用约 7 MB。
 
 ## 环境要求
@@ -23,7 +24,7 @@
 
 ## 构建
 
-直接使用：从 [v1.3 发布页](https://github.com/XYoungSky/PPTReader/releases/tag/v1.3) 下载 `PPTReader-v1.3-macOS-arm64.zip`，解压后将 `PPTReader.app` 移入「应用程序」。此安装包需要 Apple Silicon Mac 和 macOS 14 及以上版本。应用采用本地临时签名，未经 Apple 公证，首次打开可能被 macOS 拦截。
+直接使用：从 [v1.4 发布页](https://github.com/XYoungSky/PPTReader/releases/tag/v1.4) 下载 `PPTReader-v1.4-macOS-arm64.zip`，解压后将 `PPTReader.app` 移入「应用程序」。此安装包需要 Apple Silicon Mac 和 macOS 14 及以上版本。应用采用本地临时签名，未经 Apple 公证，首次打开可能被 macOS 拦截。
 
 从源码构建：
 
@@ -34,15 +35,25 @@
 
 ## 配置
 
-打开 **设置**（⌘,）→ **模型**：
+打开 **设置**（⌘,）→ **模型**。点「添加服务商」可从模板新建（最多 5 个），点按列表中的服务商即可切换；下方编辑的是正在使用的服务商：
 
 | 项目 | 填写 |
 |---|---|
-| API 地址 | `https://api.deepseek.com` |
-| API Key | 你的 Key |
+| 名称 | 便于区分的名字 |
+| API 地址 | 如 `https://api.deepseek.com` |
+| API Key | 你的 Key（每个服务商单独保存在钥匙串中） |
 | 模型 | 点击「测试连接」后选择接口返回的模型，或手动填写服务商支持的模型 ID |
 
-模型列表由接口返回结果和当前选择组成，不再预设模型名称；开始对话前需选择或填写模型。
+模型列表由接口返回结果和当前选择组成，不再预设模型名称；开始对话前需选择或填写模型。保存了多个服务商时，也可以在 AI 面板顶部的模型菜单中切换。
+
+| 模板 | API 地址 | 说明 |
+|---|---|---|
+| DeepSeek | `https://api.deepseek.com` | 可开关深度思考 |
+| Kimi Code（会员订阅） | `https://api.kimi.com/coding/v1`（海外账号：`https://api.kimi.ai/coding/v1`） | Key 在 Kimi Code 控制台创建；默认模型 `kimi-for-coding`；可调思考强度 |
+| Kimi 开放平台（按量付费） | `https://api.moonshot.cn/v1` | |
+| 其他 OpenAI 兼容接口 | 自行填写 | |
+
+> Kimi Code 会员权益面向编程场景，官方可能只允许编程工具调用；被拒绝（HTTP 403）时可改用 Kimi 开放平台的 Key。
 
 如果模型不支持图片，会自动识别并去掉截图重试。
 

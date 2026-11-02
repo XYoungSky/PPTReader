@@ -157,17 +157,149 @@ private struct SectionButton: View {
 
 private struct ModelSettings: View {
     @Environment(AppSettings.self) private var settings
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 22) {
+            ProviderList()
+            // 切换服务商时重建编辑区，Key 输入框与测试结果随之重置
+            ProviderEditor()
+                .id(settings.activeProviderID)
+        }
+    }
+}
+
+/// 保存的服务商列表：点按切换正在使用的服务商。
+private struct ProviderList: View {
+    @Environment(AppSettings.self) private var settings
+
+    var body: some View {
+        SettingsCard(title: tr("服务商", "Providers"),
+                     footer: tr("最多保存 \(AppSettings.maxProviders) 个服务商，点按即可切换；下方编辑的是正在使用的服务商。",
+                                "Save up to \(AppSettings.maxProviders) providers and click one to switch. The settings below apply to the provider in use.")) {
+            ForEach(settings.providers) { provider in
+                ProviderRow(provider: provider,
+                            active: provider.id == settings.activeProviderID,
+                            canDelete: settings.providers.count > 1) {
+                    withAnimation(Motion.content) { settings.activeProviderID = provider.id }
+                } onDelete: {
+                    confirmDelete(provider)
+                }
+            }
+            HStack(spacing: 8) {
+                PopMenuButton(style: TextButtonStyle()) {
+                    [.header(tr("从模板添加", "Add from template"))] + ProviderPreset.allCases.map { preset in
+                        PopMenuItem(preset.menuTitle) {
+                            withAnimation(Motion.content) { _ = settings.addProvider(preset) }
+                        }
+                    }
+                } label: {
+                    Label(tr("添加服务商", "Add Provider"), systemImage: "plus")
+                }
+                .fixedSize()
+                .disabled(!settings.canAddProvider)
+                Spacer()
+                Text("\(settings.providers.count) / \(AppSettings.maxProviders)")
+                    .font(.system(size: 11.5))
+                    .monospacedDigit()
+                    .foregroundStyle(Theme.text3)
+            }
+            .padding(.leading, 6)
+            .padding(.trailing, 14)
+            .padding(.vertical, 6)
+        }
+    }
+
+    /// 与清空对话一致：在鼠标位置弹出确认菜单。
+    private func confirmDelete(_ provider: APIProvider) {
+        let settings = settings
+        PopMenu.shared.show([
+            .header(tr("同时删除保存的 API Key", "Its saved API key is removed too")),
+            PopMenuItem(tr("删除“\(provider.name)”", "Delete “\(provider.name)”"), icon: "trash", destructive: true) {
+                withAnimation(Motion.content) { settings.removeProvider(provider.id) }
+            },
+            PopMenuItem(tr("取消", "Cancel"), icon: "xmark") {},
+        ], placement: .at(NSEvent.mouseLocation), in: NSApp.keyWindow, minWidth: 200)
+    }
+}
+
+private struct ProviderRow: View {
+    let provider: APIProvider
+    let active: Bool
+    let canDelete: Bool
+    let onSelect: () -> Void
+    let onDelete: () -> Void
+    @ViewState private var hovering = false
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 10) {
+                Image(systemName: active ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 14))
+                    .foregroundStyle(active ? Theme.accent : (hovering ? Theme.text2 : Theme.text3))
+                    .frame(width: 18)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(provider.name.isEmpty ? tr("未命名", "Untitled") : provider.name)
+                        .font(.system(size: 13, weight: active ? .medium : .regular))
+                        .foregroundStyle(Theme.text)
+                    Text(detail)
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(Theme.text3)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+                Spacer(minLength: 12)
+                if canDelete && hovering {
+                    Button(action: onDelete) {
+                        Label(tr("删除", "Delete"), systemImage: "trash")
+                    }
+                    .buttonStyle(IconButtonStyle(size: 24))
+                    .help(tr("删除服务商", "Delete provider"))
+                    .transition(.opacity)
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 9)
+            .contentShape(Rectangle())
+            .onTapGesture(perform: onSelect)
+            Rectangle()
+                .fill(Theme.border)
+                .frame(height: 1)
+                .padding(.leading, 14)
+        }
+        .onHover { hovering = $0 }
+        .animation(Motion.hover, value: hovering)
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(active ? [.isButton, .isSelected] : [.isButton])
+        .accessibilityAction { onSelect() }
+    }
+
+    private var detail: String {
+        var parts = [provider.summary.isEmpty ? tr("未填写地址", "No URL") : provider.summary]
+        if !provider.hasKey { parts.append(tr("未设置 Key", "No key")) }
+        return parts.joined(separator: " · ")
+    }
+}
+
+/// 编辑正在使用的服务商。
+private struct ProviderEditor: View {
+    @Environment(AppSettings.self) private var settings
     @ViewState private var keyDraft = ""
     @ViewState private var testState: TestState = .idle
 
     enum TestState: Equatable {
-        case idle, testing, success(Int), failure(String)
+        case idle, testing, success(Int), reachable, failure(String)
     }
 
     var body: some View {
         @Bindable var settings = settings
+        let providerID = settings.activeProviderID
+        let isKimiCode = OpenAIClient.isKimiCode(settings.baseURL)
         VStack(alignment: .leading, spacing: 22) {
             SettingsCard {
+                SettingsRow(title: tr("名称", "Name")) {
+                    ThemedField(text: $settings.activeProvider.name, placeholder: tr("服务商名称", "Provider name"))
+                        .frame(width: 300)
+                }
                 SettingsRow(title: tr("API 地址", "Base URL")) {
                     ThemedField(text: $settings.baseURL, placeholder: AppSettings.defaultBaseURL, monospaced: true)
                         .frame(width: 300)
@@ -175,7 +307,7 @@ private struct ModelSettings: View {
                 SettingsRow(title: "API Key") {
                     ThemedField(text: $keyDraft, placeholder: "sk-…", secure: true, monospaced: true)
                         .frame(width: 300)
-                        .onChange(of: keyDraft) { _, value in settings.setAPIKey(value) }
+                        .onChange(of: keyDraft) { _, value in settings.setAPIKey(value, for: providerID) }
                 }
                 SettingsRow(title: tr("模型", "Model"), divider: false) {
                     HStack(spacing: 6) {
@@ -193,7 +325,10 @@ private struct ModelSettings: View {
                 }
             }
 
-            SettingsCard {
+            SettingsCard(footer: isKimiCode ? tr(
+                "Kimi Code 会员订阅的 API Key 在 Kimi Code 控制台创建；海外账号请把地址改为 https://api.kimi.ai/coding/v1。会员权益面向编程场景，如果请求被拒绝，可以改用 Kimi 开放平台。",
+                "Create the key in the Kimi Code console. For international accounts, use https://api.kimi.ai/coding/v1. Membership benefits are meant for coding; if requests are refused, use the Kimi Platform instead."
+            ) : nil) {
                 if OpenAIClient.isDeepSeek(settings.baseURL) {
                     SettingsRow(title: tr("深度思考", "Deep thinking"), detail: tr("更准确，但更慢", "More accurate, slower")) {
                         Toggle("", isOn: $settings.thinking)
@@ -201,14 +336,21 @@ private struct ModelSettings: View {
                             .labelsHidden()
                     }
                 }
+                if isKimiCode {
+                    SettingsRow(title: tr("思考强度", "Thinking effort"), detail: tr("越高越准确，但更慢、更耗额度", "Higher is more accurate but slower and uses more quota")) {
+                        SegmentedPicker(selection: $settings.activeProvider.reasoningEffort,
+                                        options: ReasoningEffort.allCases.map { ($0, $0.title) })
+                            .accessibilityLabel(tr("思考强度", "Thinking effort"))
+                    }
+                }
                 SettingsRow(title: tr("测试连接", "Test connection"), detail: testDetail, detailColor: testFailed ? Theme.danger : Theme.text3, divider: false) {
-                    Button(testState == .testing ? tr("测试中…", "Testing…") : tr("测试", "Test")) { Task { await test() } }
+                    Button(testState == .testing ? tr("测试中…", "Testing…") : tr("测试", "Test")) { Task { await test(providerID) } }
                         .buttonStyle(OutlineButtonStyle())
                         .disabled(testState == .testing)
                 }
             }
         }
-        .onAppear { keyDraft = settings.apiKey }
+        .onAppear { keyDraft = settings.storedKey(for: providerID) }
     }
 
     private var testDetail: String? {
@@ -216,6 +358,7 @@ private struct ModelSettings: View {
         case .idle: nil
         case .testing: nil
         case .success(let count): tr("✓ 可用，\(count) 个模型", "✓ Connected, \(count) models")
+        case .reachable: tr("✓ 可用（接口未提供模型列表）", "✓ Connected (no model list provided)")
         case .failure(let message): "✕ \(message)"
         }
     }
@@ -225,13 +368,17 @@ private struct ModelSettings: View {
         return false
     }
 
-    private func test() async {
-        settings.setAPIKey(keyDraft)
+    private func test(_ providerID: UUID) async {
+        settings.setAPIKey(keyDraft, for: providerID)
         withAnimation(Motion.content) { testState = .testing }
         do {
-            let models = try await OpenAIClient.listModels(config: settings.connection)
-            settings.fetchedModels = models
-            withAnimation(Motion.content) { testState = .success(models.count) }
+            switch try await OpenAIClient.testConnection(config: settings.connection) {
+            case .models(let models):
+                settings.updateProvider(providerID) { $0.fetchedModels = models }
+                withAnimation(Motion.content) { testState = .success(models.count) }
+            case .reachable:
+                withAnimation(Motion.content) { testState = .reachable }
+            }
         } catch {
             withAnimation(Motion.content) { testState = .failure(error.localizedDescription) }
         }

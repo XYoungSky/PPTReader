@@ -23,6 +23,10 @@ enum APIError: LocalizedError {
             tr("API 地址无效：", "Invalid API URL: ") + url
         case .http(let code, let message):
             "\(Self.hint(for: code)) (HTTP \(code))" + (message.isEmpty ? "" : "\n\(message)")
+                + (Self.isCodingAgentOnly(code, message)
+                    ? "\n" + tr("Kimi Code 会员订阅的 API 目前只对编程工具开放。可以改用 Kimi 开放平台（按量付费）的 API Key。",
+                                "The Kimi Code membership API is currently limited to coding tools. You can use a Kimi Platform (pay-as-you-go) API key instead.")
+                    : "")
         case .server(let message):
             tr("服务端错误：", "Server error: ") + message
         }
@@ -32,6 +36,11 @@ enum APIError: LocalizedError {
     var isBadRequest: Bool {
         if case .http(let code, _) = self { return code == 400 || code == 422 }
         return false
+    }
+
+    /// Kimi Code 拒绝非编程工具时返回 403，并提示 “only available for Coding Agents”。
+    private static func isCodingAgentOnly(_ code: Int, _ message: String) -> Bool {
+        code == 403 && message.range(of: "coding agent", options: .caseInsensitive) != nil
     }
 
     private static func hint(for code: Int) -> String {
@@ -49,7 +58,15 @@ enum APIError: LocalizedError {
     }
 }
 
-/// OpenAI 兼容的 Chat Completions 客户端（DeepSeek、OpenAI、Moonshot、本地 Ollama 等均可）。
+/// 测试连接的结果。
+enum ConnectionCheck {
+    /// 接口返回了模型列表。
+    case models([String])
+    /// 接口不提供模型列表，但用当前模型发送的请求成功了。
+    case reachable
+}
+
+/// OpenAI 兼容的 Chat Completions 客户端（DeepSeek、Kimi、OpenAI、本地 Ollama 等均可）。
 enum OpenAIClient {
     private static let session: URLSession = {
         let config = URLSessionConfiguration.default
@@ -120,7 +137,9 @@ enum OpenAIClient {
                                 continuation.yield(.content(content))
                             }
                         }
-                        if let usage = json["usage"] as? [String: Any] {
+                        // 大多数服务把 usage 放在顶层（其余分片为 null），Kimi 放在最后一个 choice 里
+                        let choiceUsage = (json["choices"] as? [[String: Any]])?.first?["usage"] as? [String: Any]
+                        if let usage = (json["usage"] as? [String: Any]) ?? choiceUsage {
                             continuation.yield(.usage(parseUsage(usage)))
                         }
                     }
@@ -145,6 +164,10 @@ enum OpenAIClient {
         if isDeepSeek(config.baseURL) {
             body["thinking"] = ["type": config.thinking ? "enabled" : "disabled"]
         }
+        // Kimi Code 用 reasoning_effort（low / high / max）调整思考强度；不设置时使用模型默认值
+        if isKimiCode(config.baseURL), config.reasoningEffort != .auto {
+            body["reasoning_effort"] = config.reasoningEffort.rawValue
+        }
         return try JSONSerialization.data(withJSONObject: body)
     }
 
@@ -152,9 +175,16 @@ enum OpenAIClient {
         baseURL.lowercased().contains("deepseek.com")
     }
 
+    /// Kimi Code 会员订阅接口：国内 api.kimi.com/coding，海外 api.kimi.ai/coding。
+    static func isKimiCode(_ baseURL: String) -> Bool {
+        let lower = baseURL.lowercased()
+        return (lower.contains("api.kimi.com") || lower.contains("api.kimi.ai")) && lower.contains("/coding")
+    }
+
     private static func parseUsage(_ json: [String: Any]) -> TokenUsage {
         let cached = (json["prompt_cache_hit_tokens"] as? Int)
             ?? ((json["prompt_tokens_details"] as? [String: Any])?["cached_tokens"] as? Int)
+            ?? (json["cached_tokens"] as? Int)
         return TokenUsage(
             prompt: json["prompt_tokens"] as? Int ?? 0,
             completion: json["completion_tokens"] as? Int ?? 0,
@@ -180,5 +210,31 @@ enum OpenAIClient {
         let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
         let models = (json?["data"] as? [[String: Any]])?.compactMap { $0["id"] as? String } ?? []
         return models.sorted()
+    }
+
+    /// 测试连接：优先获取模型列表；接口不提供列表（404 / 405）时，用当前模型发一个极短的请求。
+    static func testConnection(config: ConnectionConfig) async throws -> ConnectionCheck {
+        do {
+            return .models(try await listModels(config: config))
+        } catch APIError.http(let code, _) where code == 404 || code == 405 {
+            guard !config.model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw APIError.missingModel }
+            try await ping(config: config)
+            return .reachable
+        }
+    }
+
+    private static func ping(config: ConnectionConfig) async throws {
+        var request = try request(config, path: "chat/completions")
+        request.httpMethod = "POST"
+        request.timeoutInterval = 60
+        request.httpBody = try JSONSerialization.data(withJSONObject: [
+            "model": config.model,
+            "messages": [["role": "user", "content": "ping"]],
+            "max_tokens": 16,
+            "stream": false,
+        ] as [String: Any])
+        let (data, response) = try await session.data(for: request)
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard (200..<300).contains(status) else { throw APIError.http(status, errorMessage(from: data)) }
     }
 }

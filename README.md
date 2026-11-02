@@ -12,7 +12,8 @@ A lightweight macOS app for studying course slides with an AI tutor that has rea
 - **Rich answers** — Markdown, LaTeX, code, tables, SVG, Mermaid and inline HTML. Click any diagram to open it in a zoomable preview (pinch / ⌘-scroll, drag to pan) and copy or save it as PNG.
 - **Statistics** — reading time, pages read, questions and token usage by day, deck and model (7 days / 30 days / all time), plus a GitHub-style heatmap of the past year. Earlier chats are counted automatically.
 - **Custom shortcuts** — rebind every menu command in Settings → Shortcuts.
-- **Any OpenAI-compatible API**, tuned for DeepSeek (`deepseek-flash` with vision, `deepseek-v4-pro`, thinking on/off).
+- **Any OpenAI-compatible API**, tuned for DeepSeek (`deepseek-flash` with vision, `deepseek-v4-pro`, thinking on/off), with support for the Kimi Code membership API (adjustable thinking effort).
+- **Multiple providers** — save up to 5 API configurations and switch between them in Settings or from the AI panel's model menu.
 - Chinese / English UI, light and dark mode, ~7 MB native app.
 
 ## Requirements
@@ -23,7 +24,7 @@ A lightweight macOS app for studying course slides with an AI tutor that has rea
 
 ## Build
 
-For a prebuilt app, download `PPTReader-v1.3-macOS-arm64.zip` from the [v1.3 release](https://github.com/XYoungSky/PPTReader/releases/tag/v1.3), unzip it, and move `PPTReader.app` to Applications. This build requires an Apple Silicon Mac and macOS 14 or later. It uses an ad-hoc signature and is not notarized by Apple; macOS may block the first launch.
+For a prebuilt app, download `PPTReader-v1.4-macOS-arm64.zip` from the [v1.4 release](https://github.com/XYoungSky/PPTReader/releases/tag/v1.4), unzip it, and move `PPTReader.app` to Applications. This build requires an Apple Silicon Mac and macOS 14 or later. It uses an ad-hoc signature and is not notarized by Apple; macOS may block the first launch.
 
 To build from source:
 
@@ -34,15 +35,25 @@ To build from source:
 
 ## Setup
 
-Open **Settings** (⌘,) → **Model**:
+Open **Settings** (⌘,) → **Model**. Use **Add Provider** to create one from a template (up to 5), and click a provider in the list to switch to it. The fields below edit the provider in use:
 
 | Field | Value |
 |---|---|
-| Base URL | `https://api.deepseek.com` |
-| API Key | your key |
+| Name | any label |
+| Base URL | e.g. `https://api.deepseek.com` |
+| API Key | your key (stored per provider in the Keychain) |
 | Model | Click **Test connection**, then choose a returned model, or enter a model ID supported by your provider |
 
-The model list combines the API results with your current selection. No model names are preset, and a model must be selected or entered before chatting.
+The model list combines the API results with your current selection. No model names are preset, and a model must be selected or entered before chatting. With several providers saved, you can also switch from the model menu at the top of the AI panel.
+
+| Template | Base URL | Notes |
+|---|---|---|
+| DeepSeek | `https://api.deepseek.com` | thinking on/off |
+| Kimi Code (membership) | `https://api.kimi.com/coding/v1` (international: `https://api.kimi.ai/coding/v1`) | create the key in the Kimi Code console; default model `kimi-for-coding`; adjustable thinking effort |
+| Kimi Platform (pay-as-you-go) | `https://api.moonshot.cn/v1` | |
+| Other OpenAI-compatible API | your own | |
+
+> Kimi Code membership benefits are meant for coding, and Kimi may only accept requests from coding tools. If requests are refused (HTTP 403), use a Kimi Platform key instead.
 
 Models that reject images are detected automatically; the request is retried without the screenshot.
 

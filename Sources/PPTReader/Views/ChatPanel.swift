@@ -84,7 +84,20 @@ private struct ModelMenu: View {
 
     var body: some View {
         PopMenuButton(trailing: true, style: TextButtonStyle(font: .system(size: 12))) {
-            var items = settings.modelChoices.map { name in
+            var items: [PopMenuItem] = []
+            // 保存了多个服务商时，可以在这里直接切换
+            if settings.providers.count > 1 {
+                items.append(.header(tr("服务商", "Provider")))
+                items += settings.providers.map { provider in
+                    PopMenuItem(provider.name, checked: provider.id == settings.activeProviderID) {
+                        settings.activeProviderID = provider.id
+                    }
+                }
+                if !settings.modelChoices.isEmpty {
+                    items += [.separator, .header(tr("模型", "Model"))]
+                }
+            }
+            items += settings.modelChoices.map { name in
                 PopMenuItem(name, checked: name == settings.effectiveModel) { settings.model = name }
             }
             if !items.isEmpty { items.append(.separator) }
