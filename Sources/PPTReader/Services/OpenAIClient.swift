@@ -40,10 +40,42 @@ enum APIError: LocalizedError {
         }
     }
 
-    /// 400/422 往往是模型不接受图片等参数问题，可以去掉图片后重试。
+    /// 400/413/422 往往是参数问题（图片、上下文长度、max_tokens、不认识的参数），调整后可以重试。
     var isBadRequest: Bool {
-        if case .http(let code, _) = self { return code == 400 || code == 422 }
+        if case .http(let code, _) = self { return code == 400 || code == 413 || code == 422 }
         return false
+    }
+
+    /// 从 400 类错误的说明里判断是哪里出了问题。各家的措辞不同，只按关键词粗略判断，认不出时返回 nil。
+    /// - Parameters:
+    ///   - sentParameters: 这次请求发送了的可选参数名。
+    ///   - maxTokens: 这次请求发送的 max_tokens（没发送为 nil）。
+    func requestProblem(sentParameters: [String], maxTokens: Int?) -> RequestProblem? {
+        guard isBadRequest, case .http(_, let message) = self else { return nil }
+        let lower = message.lowercased()
+        let numbers = Self.numbers(in: message)
+        let contextHints = ["context length", "context_length", "context window", "maximum context", "token limit",
+                            "too many tokens", "prompt is too long", "input is too long", "tokens exceed", "上下文长度", "超出.*token"]
+        if contextHints.contains(where: { lower.range(of: $0, options: .regularExpression) != nil }) {
+            return .contextLength(limit: numbers.first { $0 >= 1024 })
+        }
+        if maxTokens != nil, ["max_tokens", "max_completion_tokens", "max_output_tokens"].contains(where: lower.contains) {
+            // 报错里通常会写出允许的上限，取比这次请求的值小的最大那个数
+            return .maxTokens(limit: numbers.filter { $0 >= 256 && $0 < maxTokens! }.max())
+        }
+        if ["image", "vision", "multimodal", "multi-modal", "多模态", "图片", "图像"].contains(where: lower.contains) {
+            return .image
+        }
+        if let parameter = sentParameters.first(where: { lower.contains($0) }) {
+            return .unsupported(parameter)
+        }
+        return nil
+    }
+
+    private static func numbers(in text: String) -> [Int] {
+        // 去掉数字中间的千位分隔符（"128,000"）
+        let plain = text.replacingOccurrences(of: "(?<=\\d),(?=\\d{3})", with: "", options: .regularExpression)
+        return plain.split(whereSeparator: { !$0.isNumber }).compactMap { Int($0) }
     }
 
     /// Kimi Code 拒绝非编程工具时返回 403，并提示 “only available for Coding Agents”。
@@ -64,6 +96,18 @@ enum APIError: LocalizedError {
         default: tr("请求失败", "Request failed")
         }
     }
+}
+
+/// 400 类错误的具体原因，用于决定怎样调整后重试。
+enum RequestProblem: Equatable {
+    /// 模型不接受图片。
+    case image
+    /// 上下文超长；能从报错里读出上限时附上。
+    case contextLength(limit: Int?)
+    /// max_tokens 超出范围或不被接受；能读出允许的上限时附上。
+    case maxTokens(limit: Int?)
+    /// 不接受某个可选参数。
+    case unsupported(String)
 }
 
 /// 测试连接的结果。
@@ -97,15 +141,74 @@ enum OpenAIClient {
     }
 
     private static func request(_ config: ConnectionConfig, path: String) throws -> URLRequest {
-        guard !config.apiKey.isEmpty else { throw APIError.missingKey }
         var request = URLRequest(url: try endpoint(config.baseURL, path))
-        request.setValue("Bearer \(config.apiKey)", forHTTPHeaderField: "Authorization")
+        if config.apiKey.isEmpty {
+            // 本机或局域网里的服务（Ollama、LM Studio 等）通常不需要 Key
+            guard isLocal(config.baseURL) else { throw APIError.missingKey }
+        } else {
+            request.setValue("Bearer \(config.apiKey)", forHTTPHeaderField: "Authorization")
+        }
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         return request
     }
 
-    /// - Parameter messages: 已序列化好的 messages 数组（JSON）。
-    static func stream(config: ConnectionConfig, messages: Data) -> AsyncThrowingStream<StreamEvent, Error> {
+    /// 本机或局域网地址。
+    static func isLocal(_ baseURL: String) -> Bool {
+        let trimmed = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let host = URL(string: trimmed.contains("://") ? trimmed : "http://" + trimmed)?.host?.lowercased() else { return false }
+        if ["localhost", "127.0.0.1", "::1", "0.0.0.0"].contains(host) || host.hasSuffix(".local") { return true }
+        let octets = host.split(separator: ".").compactMap { Int($0) }
+        guard octets.count == 4 else { return false }
+        return octets[0] == 10 || octets[0] == 127 || (octets[0] == 192 && octets[1] == 168)
+            || (octets[0] == 172 && (16...31).contains(octets[1]))
+    }
+
+    /// 请求的可选部分。
+    struct RequestOptions: Sendable {
+        /// 为空时不发送，由服务商使用默认值。
+        var maxTokens: Int?
+        /// 这个模型不接受、不再发送的可选参数。
+        var omit: Set<String> = []
+    }
+
+    /// 组装请求体。返回实际发送了的可选参数名，出错时用来判断是哪个参数不被接受。
+    static func makeBody(config: ConnectionConfig, messages: [[String: Any]], options: RequestOptions) throws -> (data: Data, optionalParameters: [String]) {
+        var body: [String: Any] = [
+            "model": config.model,
+            "messages": messages,
+            "stream": true,
+        ]
+        var optional: [String] = []
+        func add(_ key: String, _ value: Any) {
+            guard !options.omit.contains(key) else { return }
+            body[key] = value
+            optional.append(key)
+        }
+        add("stream_options", ["include_usage": true])
+        if let maxTokens = options.maxTokens { body["max_tokens"] = maxTokens }
+        // DeepSeek 用 thinking 参数开关深度思考（默认开启）；其他服务不认识这个参数，不发送
+        if config.kind.hasThinkingToggle {
+            add("thinking", ["type": config.thinking ? "enabled" : "disabled"])
+        }
+        // Kimi Code 用 reasoning_effort（low / high / max）调整思考强度；不设置时使用模型默认值
+        if config.kind.hasReasoningEffort, config.reasoningEffort != .auto {
+            add("reasoning_effort", config.reasoningEffort.rawValue)
+        }
+        return (try JSONSerialization.data(withJSONObject: body), optional)
+    }
+
+    /// 还没收到任何输出时，限流、服务端临时故障和连接中断最多自动重试这么多次。
+    private static let maxRetries = 3
+
+    /// 非 2xx 响应，附带重试需要的信息。
+    private struct HTTPFailure: Error {
+        let error: APIError
+        let status: Int
+        let retryAfter: Double?
+    }
+
+    /// - Parameter body: `makeBody` 组装好的请求体。
+    static func stream(config: ConnectionConfig, body: Data) -> AsyncThrowingStream<StreamEvent, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
                 do {
@@ -115,43 +218,24 @@ enum OpenAIClient {
                     var request = try request(config, path: "chat/completions")
                     request.httpMethod = "POST"
                     request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
-                    request.httpBody = try body(config: config, messages: messages)
+                    request.httpBody = body
 
-                    let (bytes, response) = try await session.bytes(for: request)
-                    let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-                    guard (200..<300).contains(status) else {
-                        var data = Data()
-                        for try await byte in bytes {
-                            data.append(byte)
-                            if data.count > 32_000 { break }
-                        }
-                        throw httpError(status, data, config)
-                    }
-
-                    for try await line in bytes.lines {
-                        guard line.hasPrefix("data:") else { continue }
-                        let payload = line.dropFirst(5).trimmingCharacters(in: .whitespaces)
-                        if payload == "[DONE]" { break }
-                        guard let json = try? JSONSerialization.jsonObject(with: Data(payload.utf8)) as? [String: Any] else { continue }
-                        if let error = json["error"] as? [String: Any] {
-                            throw APIError.server(error["message"] as? String ?? "unknown")
-                        }
-                        if let choices = json["choices"] as? [[String: Any]],
-                           let delta = choices.first?["delta"] as? [String: Any] {
-                            if let reasoning = (delta["reasoning_content"] ?? delta["reasoning"]) as? String, !reasoning.isEmpty {
-                                continuation.yield(.reasoning(reasoning))
+                    var yielded = false
+                    var attempt = 0
+                    while true {
+                        do {
+                            try await streamOnce(request, config) { event in
+                                yielded = true
+                                continuation.yield(event)
                             }
-                            if let content = delta["content"] as? String, !content.isEmpty {
-                                continuation.yield(.content(content))
+                            break
+                        } catch {
+                            // 已经输出了内容就不再重试，以免回答重复
+                            guard !yielded, attempt < maxRetries, let delay = retryDelay(for: error, attempt: attempt) else {
+                                throw (error as? HTTPFailure)?.error ?? error
                             }
-                        }
-                        if let reason = (json["choices"] as? [[String: Any]])?.first?["finish_reason"] as? String {
-                            continuation.yield(.finish(reason))
-                        }
-                        // 大多数服务把 usage 放在顶层（其余分片为 null），Kimi 放在最后一个 choice 里
-                        let choiceUsage = (json["choices"] as? [[String: Any]])?.first?["usage"] as? [String: Any]
-                        if let usage = (json["usage"] as? [String: Any]) ?? choiceUsage {
-                            continuation.yield(.usage(parseUsage(usage)))
+                            attempt += 1
+                            try await Task.sleep(for: .seconds(delay))
                         }
                     }
                     continuation.finish()
@@ -163,25 +247,68 @@ enum OpenAIClient {
         }
     }
 
-    private static func body(config: ConnectionConfig, messages: Data) throws -> Data {
-        let messagesJSON = try JSONSerialization.jsonObject(with: messages)
-        var body: [String: Any] = [
-            "model": config.model,
-            "messages": messagesJSON,
-            "stream": true,
-            "stream_options": ["include_usage": true],
-        ]
-        // DeepSeek 用 thinking 参数开关深度思考（默认开启）；其他服务不认识这个参数，不发送
-        if isDeepSeek(config.baseURL) {
-            body["thinking"] = ["type": config.thinking ? "enabled" : "disabled"]
+    private static func streamOnce(_ request: URLRequest, _ config: ConnectionConfig, emit: (StreamEvent) -> Void) async throws {
+        let (bytes, response) = try await session.bytes(for: request)
+        let http = response as? HTTPURLResponse
+        let status = http?.statusCode ?? 0
+        guard (200..<300).contains(status) else {
+            var data = Data()
+            for try await byte in bytes {
+                data.append(byte)
+                if data.count > 32_000 { break }
+            }
+            let retryAfter = (http?.value(forHTTPHeaderField: "Retry-After")).flatMap { Double($0.trimmingCharacters(in: .whitespaces)) }
+            throw HTTPFailure(error: httpError(status, data, config), status: status, retryAfter: retryAfter)
         }
-        // Kimi Code 用 reasoning_effort（low / high / max）调整思考强度；不设置时使用模型默认值
-        if isKimiCode(config.baseURL), config.reasoningEffort != .auto {
-            body["reasoning_effort"] = config.reasoningEffort.rawValue
+
+        for try await line in bytes.lines {
+            guard line.hasPrefix("data:") else { continue }
+            let payload = line.dropFirst(5).trimmingCharacters(in: .whitespaces)
+            if payload == "[DONE]" { break }
+            guard let json = try? JSONSerialization.jsonObject(with: Data(payload.utf8)) as? [String: Any] else { continue }
+            if let error = json["error"] as? [String: Any] {
+                throw APIError.server(error["message"] as? String ?? "unknown")
+            }
+            let choice = (json["choices"] as? [[String: Any]])?.first
+            if let delta = choice?["delta"] as? [String: Any] {
+                if let reasoning = (delta["reasoning_content"] ?? delta["reasoning"]) as? String, !reasoning.isEmpty {
+                    emit(.reasoning(reasoning))
+                }
+                if let content = delta["content"] as? String, !content.isEmpty {
+                    emit(.content(content))
+                }
+            }
+            if let reason = choice?["finish_reason"] as? String {
+                emit(.finish(reason))
+            }
+            // 大多数服务把 usage 放在顶层（其余分片为 null），Kimi 放在最后一个 choice 里
+            if let usage = (json["usage"] as? [String: Any]) ?? (choice?["usage"] as? [String: Any]) {
+                emit(.usage(parseUsage(usage)))
+            }
         }
-        return try JSONSerialization.data(withJSONObject: body)
     }
 
+    /// 可以重试时返回等待的秒数：限流和服务端临时故障按 Retry-After 或指数退避，连接中断稍等即重试。
+    /// 额度用尽、余额不足这类重试也没用的错误，以及要等很久的限流，直接报错。
+    private static func retryDelay(for error: Error, attempt: Int) -> Double? {
+        let backoff = 1.5 * pow(2, Double(attempt))
+        if let failure = error as? HTTPFailure {
+            guard [408, 429, 500, 502, 503, 504, 529].contains(failure.status) else { return nil }
+            if case .http(_, let message) = failure.error,
+               ["quota", "balance", "insufficient", "billing", "余额", "额度"].contains(where: message.lowercased().contains) {
+                return nil
+            }
+            if let wait = failure.retryAfter { return wait <= 20 ? max(wait, 0.5) : nil }
+            return backoff
+        }
+        if let urlError = error as? URLError,
+           [.networkConnectionLost, .cannotConnectToHost, .dnsLookupFailed, .badServerResponse].contains(urlError.code) {
+            return backoff
+        }
+        return nil
+    }
+
+    /// 只用于从地址推断接口类型；发请求时按保存的类型判断。
     static func isDeepSeek(_ baseURL: String) -> Bool {
         baseURL.lowercased().contains("deepseek.com")
     }

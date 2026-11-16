@@ -42,7 +42,10 @@ enum PromptBuilder {
         var title: String
         var pageCount: Int
         var currentPage: Int
+        /// 放进系统提示的课件文字。OCR 进行中只在几个节点更新（见 `ReaderModel.promptText`），系统提示因此保持稳定。
         var text: DocumentText?
+        /// 最新提取到的文字；当前页不在系统提示里（或当时还没 OCR 完）时，从这里补进当轮提问。
+        var latestText: DocumentText?
         var charLimit: Int
         var historyLimit: Int
         /// 整个请求最多使用的 token 数（模型上下文窗口 × 设置的比例）；为空时不限制。
@@ -55,6 +58,17 @@ enum PromptBuilder {
         var coursewareTokenBudget: Int? {
             tokenBudget.map { max(2_000, $0 * 3 / 4 - 3_000) }
         }
+
+        /// 历史切块的大小依据：只取决于设置，不随当轮提问的长短、有没有截图变化，切块边界因此不会每轮移动。
+        var historyChunkBudget: Int? {
+            tokenBudget.map { max(1_000, $0 - (coursewareTokenBudget ?? 0)) }
+        }
+    }
+
+    /// 组装好的请求消息，以及不含截图的 token 估算（用来计算 max_tokens 和校准估算）。
+    struct Request {
+        var messages: [[String: Any]]
+        var estimatedTokens: Int
     }
 
     // MARK: - 指令
@@ -126,26 +140,31 @@ enum PromptBuilder {
     //   截图只随当轮发送，它排在文字后面，去掉后前面的文字仍能命中。
     // - 历史超过上限时整块丢掉较早的一段，而不是每轮滑动一条，让前缀能连续几轮保持不变。
 
-    static func requestMessages(history: [ChatMessage], context: Context) -> [[String: Any]] {
+    /// 计算历史预算时给当轮提问（文字 + 截图）预留的 token 数。
+    static let questionAllowance = 4_000
+
+    static func requestMessages(history: [ChatMessage], context: Context) -> Request {
         let system = systemPrompt(context)
         var result: [[String: Any]] = [["role": "system", "content": system]]
-        guard let current = history.last, current.role == .user else { return result }
+        var estimate = TokenEstimate.of(system) + 4
+        guard let current = history.last, current.role == .user else { return Request(messages: result, estimatedTokens: estimate) }
 
         let text = current.sentText ?? composeText(current, context: context)
-        // 历史只能用系统提示和当前提问用剩的预算
+        // 历史只能用系统提示和当前提问用剩的预算。当轮提问按固定的额度预留（只有特别长时才按实际），
+        // 这样历史预算不随提问长短、有没有截图来回变化，保留的起点只会往前推、不会退回去
+        let currentCost = TokenEstimate.of(text) + (context.pageImageJPEG == nil ? 0 : TokenEstimate.image)
         let historyBudget = context.tokenBudget.map { budget in
-            max(0, budget - TokenEstimate.of(system) - TokenEstimate.of(text)
-                - (context.pageImageJPEG == nil ? 0 : TokenEstimate.image))
+            max(0, budget - TokenEstimate.of(system) - max(currentCost, Self.questionAllowance))
         }
 
-        for message in historyWindow(Array(history.dropLast()), limit: context.historyLimit, tokenBudget: historyBudget) {
-            switch message.role {
-            case .user:
-                result.append(["role": "user", "content": message.sentText ?? legacyText(message)])
-            case .assistant:
-                result.append(["role": "assistant", "content": message.content])
-            }
+        let window = historyWindow(Array(history.dropLast()), limit: context.historyLimit,
+                                   tokenBudget: historyBudget, chunkBudget: context.historyChunkBudget)
+        for message in window {
+            let content = message.role == .user ? (message.sentText ?? legacyText(message)) : message.content
+            result.append(["role": message.role.rawValue, "content": content])
+            estimate += TokenEstimate.of(content) + 4
         }
+        estimate += TokenEstimate.of(text) + 4
 
         if let image = context.pageImageJPEG {
             result.append(["role": "user", "content": [
@@ -155,7 +174,7 @@ enum PromptBuilder {
         } else {
             result.append(["role": "user", "content": text])
         }
-        return result
+        return Request(messages: result, estimatedTokens: estimate)
     }
 
     /// 一条提问实际发给模型的文字：页码、选中内容、指令和讲解方式。发出时保存，之后原样用作历史。
@@ -164,6 +183,9 @@ enum PromptBuilder {
         if let page = message.page {
             parts.append(tr("【我正在看第 \(page) / \(context.pageCount) 页】", "[I'm on page \(page) of \(context.pageCount)]"))
         }
+        if let page = message.page, let supplement = pageSupplement(page, context: context) {
+            parts.append(supplement)
+        }
         if let selection = message.selection, !selection.isEmpty {
             let page = message.page ?? context.currentPage
             parts.append(tr("【我在第 \(page) 页选中的内容】", "[Selected on page \(page)]") + "\n\(selection)")
@@ -171,6 +193,16 @@ enum PromptBuilder {
         parts.append(message.instruction)
         parts.append(context.explanationStyle.block)
         return parts.joined(separator: "\n\n")
+    }
+
+    /// 当前页的文字不在系统提示里时（课件太长被省略，或 OCR 在系统提示定下来之后才完成），补进这条提问。
+    /// 提问发出后原样保存为历史，所以补进来的文字之后也能命中缓存。
+    private static func pageSupplement(_ page: Int, context: Context) -> String? {
+        let index = page - 1
+        let latest = (context.latestText ?? context.text)?.text(ofPage: page) ?? ""
+        guard !latest.isEmpty else { return nil }
+        if let text = context.text, !text.text(ofPage: page).isEmpty, includedPages(context).contains(index) { return nil }
+        return tr("【第 \(page) 页的文字】", "[Text of page \(page)]") + "\n" + String(latest.prefix(6_000))
     }
 
     /// 1.6 之前保存的提问没有原文：按固定格式重建，保证每次请求得到相同的文字。
@@ -188,7 +220,8 @@ enum PromptBuilder {
 
     /// 携带的历史：跳过出错的轮次；超过条数上限或 token 预算时，按"半个上限"为一块整块丢弃最早的轮次，
     /// 起点只在丢弃时才移动，前缀能连续几轮保持不变。
-    static func historyWindow(_ past: [ChatMessage], limit: Int, tokenBudget: Int? = nil) -> [ChatMessage] {
+    /// - Parameter chunkBudget: 决定切块大小的稳定预算（为空时用 tokenBudget）。
+    static func historyWindow(_ past: [ChatMessage], limit: Int, tokenBudget: Int? = nil, chunkBudget: Int? = nil) -> [ChatMessage] {
         var turns: [ChatMessage] = []
         var index = 0
         while index < past.count {
@@ -209,15 +242,15 @@ enum PromptBuilder {
         let step = max(2, limit / 4 * 2)
         var drop = turns.count > limit ? (turns.count - limit + step - 1) / step * step : 0
         if let tokenBudget {
-            drop = max(drop, tokenDrop(turns, budget: tokenBudget))
+            drop = max(drop, tokenDrop(turns, budget: tokenBudget, chunkBudget: chunkBudget ?? tokenBudget))
         }
         return Array(turns.dropFirst(drop))
     }
 
-    /// 超出 token 预算时从哪里开始保留。按累计 token 把历史切成大约半个预算一块，
-    /// 块的边界只由更早的消息决定，追加新消息时不会移动；取能放进预算的最早一个边界。
+    /// 超出 token 预算时从哪里开始保留。按累计 token 把历史切成大约半个（稳定）预算一块，
+    /// 块的边界只由更早的消息和设置决定，追加新消息、当轮提问长短变化时都不会移动；取能放进本轮预算的最早一个边界。
     /// 这样一次丢掉约半个预算的旧对话，之后能连续几轮保持同样的前缀。
-    private static func tokenDrop(_ turns: [ChatMessage], budget: Int) -> Int {
+    private static func tokenDrop(_ turns: [ChatMessage], budget: Int, chunkBudget: Int) -> Int {
         let costs = turns.map { message in
             TokenEstimate.of(message.role == .user ? (message.sentText ?? legacyText(message)) : message.content) + 4
         }
@@ -225,7 +258,7 @@ enum PromptBuilder {
         for index in costs.indices.reversed() { suffix[index] = suffix[index + 1] + costs[index] }
         guard suffix[0] > budget else { return 0 }
 
-        let chunk = max(1, budget / 2)
+        let chunk = max(1, chunkBudget / 2)
         var boundaries = [0]
         var cumulative = 0
         var mark = chunk
@@ -249,10 +282,11 @@ enum PromptBuilder {
     // - 提示本身用连贯的段落来写，不写成一条条规则。模型会模仿提示的文风，规则清单写多了，回答也会变成清单。
     // - 不给模型套"你是一位××老师"之类的角色，只交代任务、读者和写法。
     // - 系统提示里不放任何随设置或翻页变化的内容（讲解方式附在每条提问末尾），整段对同一份课件逐字不变。
+    // - 课件标题、页数和课件文字都放在最后，前面的写作说明对所有课件逐字相同，换一份课件时这一段也能命中缓存。
 
     private static func chineseSystemPrompt(_ context: Context) -> String {
         """
-        学生正在学习课件《\(context.title)》（共 \(context.pageCount) 页），你负责讲解这份课件、回答学生的问题。整份课件逐页提取的文字在后面的 <courseware> 里。
+        学生正在学习一份课件，你负责讲解这份课件、回答学生的问题。课件的标题和逐页提取的文字在最后的 <courseware> 里。
 
         ## 怎么写
 
@@ -290,6 +324,10 @@ enum PromptBuilder {
 
         学生每条消息的末尾附有【讲解方式】：学生在设置里选的篇幅、图和例题，有时还有学生自己写的要求，以最新一条消息里的为准。照着写就行，但不要在回答里提到这些设置，比如不要说“按你的设置，这里不举例”。学生自己写的要求和前面几项冲突时，以学生自己写的为准；学生在消息正文里直接提的要求（“详细点”“举个例子”“画个图”“出几道题”等）优先于整个【讲解方式】。
 
+        ## 课件
+
+        《\(context.title)》，共 \(context.pageCount) 页。
+
         <courseware>
         \(coursewareText(context))
         </courseware>
@@ -298,7 +336,7 @@ enum PromptBuilder {
 
     private static func englishSystemPrompt(_ context: Context) -> String {
         """
-        A student is studying the deck "\(context.title)" (\(context.pageCount) pages). Your job is to explain the deck and answer their questions. The text of every page is in <courseware> below.
+        A student is studying a slide deck. Your job is to explain the deck and answer their questions. The deck's title and the text of every page are in <courseware> at the end.
 
         ## How to write
 
@@ -336,34 +374,45 @@ enum PromptBuilder {
 
         Each student message ends with an [Explanation style] block: the length, diagram and example settings the student chose, sometimes followed by their own requests. The block in the latest message is the one that counts. Follow it, but don't mention it in your answers (no "per your settings, I'll skip the example"). Where the student's own requests conflict with the other items, their own requests win; anything the student asks for in the body of a message, such as more detail, an example, a diagram or a quiz, takes precedence over the whole block.
 
+        ## The deck
+
+        "\(context.title)", \(context.pageCount) pages.
+
         <courseware>
         \(coursewareText(context))
         </courseware>
         """
     }
 
-    private static func coursewareText(_ context: Context) -> String {
-        guard let text = context.text, !text.pages.isEmpty else {
-            return tr("（课件文字仍在提取中，暂时无法提供。）", "(The deck's text is still being extracted.)")
-        }
-        let pages = text.pages
+    /// 系统提示里放入了哪些页（从 0 开始）。课件放得下就全放；放不下时从中心页向两侧扩展，直到用完预算。
+    /// 中心按步长取整，在附近翻页时摘取的范围（也就是系统提示）保持不变，前缀缓存不会因翻页失效。
+    /// 步长不超过窗口能容纳页数的一半，当前页几乎总在窗口里；万一不在，由 `pageSupplement` 补进提问，
+    /// 而不是改成以当前页为中心（那样每翻一页系统提示都会变）。
+    static func includedPages(_ context: Context) -> Set<Int> {
+        guard let pages = context.text?.pages, !pages.isEmpty else { return [] }
         // 每页的开销：字数受「课件文字上限」约束，token 数受上下文上限约束
         let costs = pages.map { PageCost(chars: $0.count + 20, tokens: TokenEstimate.of($0) + 8) }
         let budget = PageCost(chars: context.charLimit, tokens: context.coursewareTokenBudget ?? .max)
-        var included = Set<Int>()
-        if costs.reduce(0, { $0 + $1.chars }) <= budget.chars && costs.reduce(0, { $0 + $1.tokens }) <= budget.tokens {
-            included = Set(pages.indices)
-        } else {
-            // 课件过长：从中心页向两侧扩展，直到用完预算。中心按步长取整，
-            // 在附近翻页时摘取的范围（也就是系统提示）保持不变，前缀缓存不会因翻页失效。
-            let current = min(max(context.currentPage - 1, 0), pages.count - 1)
-            let step = max(5, pages.count / 10)
-            let snapped = min((current + step / 2) / step * step, pages.count - 1)
-            included = window(around: snapped, costs: costs, budget: budget)
-            if !included.contains(current) {
-                included = window(around: current, costs: costs, budget: budget)
-            }
+        let total = costs.reduce(PageCost(chars: 0, tokens: 0)) { PageCost(chars: $0.chars + $1.chars, tokens: $0.tokens + $1.tokens) }
+        if total.chars <= budget.chars && total.tokens <= budget.tokens { return Set(pages.indices) }
+
+        let fraction = min(Double(budget.chars) / Double(max(total.chars, 1)), Double(budget.tokens) / Double(max(total.tokens, 1)))
+        let capacity = max(1, Int(Double(pages.count) * fraction))
+        let step = max(1, min(max(5, pages.count / 10), capacity / 2))
+        let current = min(max(context.currentPage - 1, 0), pages.count - 1)
+        let snapped = min((current + step / 2) / step * step, pages.count - 1)
+        return window(around: snapped, costs: costs, budget: budget)
+    }
+
+    private static func coursewareText(_ context: Context) -> String {
+        guard let text = context.text else {
+            return tr("（课件文字仍在提取中，暂时无法提供。）", "(The deck's text is still being extracted.)")
         }
+        guard !text.pages.isEmpty else {
+            return tr("（没有提取到课件文字。）", "(No text could be extracted from the deck.)")
+        }
+        let pages = text.pages
+        let included = includedPages(context)
 
         var lines: [String] = []
         var omittedStart: Int?

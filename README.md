@@ -12,7 +12,7 @@ A lightweight macOS app for studying course slides with an AI tutor that has rea
 - **Rich answers** — Markdown, LaTeX, code, tables, SVG, Mermaid and inline HTML. Click any diagram to open it in a zoomable preview (pinch / ⌘-scroll, drag to pan) and copy or save it as PNG.
 - **Explanation style** — choose how long answers are and how many diagrams and worked examples they include, and add your own instructions (e.g. "write out full derivations"). Open it from the AI panel's More menu.
 - **Statistics** — reading time, pages read, questions and token usage by day, deck, course and model (7 days / 30 days / all time), plus a GitHub-style heatmap of the past year. Each deck shows the course folder it belongs to; earlier chats are counted automatically.
-- **Cache-friendly requests** — a fixed system prompt, append-only history and block-wise trimming keep the provider's prefix cache hitting across a conversation.
+- **Cache-friendly requests** — a fixed system prompt (deck-independent instructions first, the deck last), append-only history and block-wise trimming with stable boundaries keep the provider's prefix cache hitting across a conversation, while text is still being OCR'd and when you page through a long deck.
 - **Custom shortcuts** — rebind every menu command in Settings → Shortcuts.
 - **Any OpenAI-compatible API**, tuned for DeepSeek (`deepseek-flash` with vision, `deepseek-v4-pro`, thinking on/off), with support for the Kimi Code membership API (adjustable thinking effort).
 - **Multiple providers** — save up to 5 API configurations and switch between them in Settings or from the AI panel's model menu.
@@ -43,7 +43,8 @@ Open **Settings** (⌘,) → **Model**. Use **Add Provider** to create one from 
 |---|---|
 | Name | any label |
 | Base URL | e.g. `https://api.deepseek.com` |
-| API Key | your key (stored per provider in the Keychain) |
+| API type | set from the template or recognised URL; decides whether DeepSeek thinking or Kimi Code effort is sent. Pick it yourself when going through a proxy |
+| API Key | your key (stored per provider in the Keychain); optional for local servers such as Ollama or LM Studio |
 | Model | Click **Test connection**, then choose a returned model, or enter a model ID supported by your provider |
 | Context window | taken from the API when it reports one, otherwise 128K is assumed; you can also pick it to match the provider's model docs |
 
@@ -60,7 +61,7 @@ The model list combines the API results with your current selection. No model na
 
 > Kimi Code membership benefits are meant for coding, and Kimi may only accept requests from coding tools. If requests are refused (HTTP 403), use a Kimi Platform key instead.
 
-Models that reject images are detected automatically; the request is retried without the screenshot.
+When a request is refused, PPTReader works out why and retries: models that reject images get no more screenshots, a context-length error records the real limit, and an out-of-range `max_tokens` or an unsupported option is remembered and left out. Rate limits, temporary server errors and dropped connections are retried automatically before any output arrives. What was detected is shown under **Settings → Model → Detected limits**, where it can be reset.
 
 ## Shortcuts
 

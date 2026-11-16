@@ -286,7 +286,7 @@ private struct ProviderRow: View {
 
     private var detail: String {
         var parts = [provider.summary.isEmpty ? tr("未填写地址", "No URL") : provider.summary]
-        if !provider.hasKey { parts.append(tr("未设置 Key", "No key")) }
+        if !provider.hasKey && !OpenAIClient.isLocal(provider.baseURL) { parts.append(tr("未设置 Key", "No key")) }
         return parts.joined(separator: " · ")
     }
 }
@@ -304,7 +304,8 @@ private struct ProviderEditor: View {
     var body: some View {
         @Bindable var settings = settings
         let providerID = settings.activeProviderID
-        let isKimiCode = OpenAIClient.isKimiCode(settings.baseURL)
+        let isKimiCode = settings.activeProvider.kind == .kimiCode
+        let kimiKeyMismatch = OpenAIClient.isKimiCodeKey(keyDraft) && !OpenAIClient.isKimiCode(settings.baseURL)
         VStack(alignment: .leading, spacing: 22) {
             SettingsCard {
                 SettingsRow(title: tr("名称", "Name")) {
@@ -315,13 +316,15 @@ private struct ProviderEditor: View {
                     ThemedField(text: $settings.baseURL, placeholder: AppSettings.defaultBaseURL, monospaced: true)
                         .frame(width: 300)
                 }
+                ProviderKindRow()
                 SettingsRow(title: "API Key") {
-                    ThemedField(text: $keyDraft, placeholder: "sk-…", secure: true, monospaced: true)
+                    ThemedField(text: $keyDraft, placeholder: OpenAIClient.isLocal(settings.baseURL) ? tr("本机服务可不填", "Optional for local servers") : "sk-…",
+                                secure: true, monospaced: true)
                         .frame(width: 300)
                         .onChange(of: keyDraft) { _, value in settings.setAPIKey(value, for: providerID) }
                 }
                 // Kimi Code 会员的 Key 填在了别的地址（常见于开放平台 api.moonshot.cn），请求会返回 401
-                if OpenAIClient.isKimiCodeKey(keyDraft) && !isKimiCode {
+                if kimiKeyMismatch {
                     SettingsRow(title: tr("这是 Kimi Code 会员的 Key", "This is a Kimi Code membership key"),
                                 detail: tr("只能用于 Kimi Code 地址；开放平台需要在 platform.moonshot.cn 另外创建 Key",
                                            "It only works with the Kimi Code URL. The Kimi Platform needs its own key from platform.moonshot.cn"),
@@ -352,18 +355,26 @@ private struct ProviderEditor: View {
                 "Kimi Code 会员订阅的 API Key 在 Kimi Code 控制台创建；海外账号请把地址改为 https://api.kimi.ai/coding/v1。会员权益面向编程场景，如果请求被拒绝，可以改用 Kimi 开放平台。",
                 "Create the key in the Kimi Code console. For international accounts, use https://api.kimi.ai/coding/v1. Membership benefits are meant for coding; if requests are refused, use the Kimi Platform instead."
             ) : nil) {
-                if OpenAIClient.isDeepSeek(settings.baseURL) {
+                if settings.activeProvider.kind.hasThinkingToggle {
                     SettingsRow(title: tr("深度思考", "Deep thinking"), detail: tr("更准确，但更慢", "More accurate, slower")) {
                         Toggle("", isOn: $settings.thinking)
                             .toggleStyle(AccentToggleStyle())
                             .labelsHidden()
                     }
                 }
-                if isKimiCode {
+                if settings.activeProvider.kind.hasReasoningEffort {
                     SettingsRow(title: tr("思考强度", "Thinking effort"), detail: tr("越高越准确，但更慢、更耗额度", "Higher is more accurate but slower and uses more quota")) {
                         SegmentedPicker(selection: $settings.activeProvider.reasoningEffort,
                                         options: ReasoningEffort.allCases.map { ($0, $0.title) })
                             .accessibilityLabel(tr("思考强度", "Thinking effort"))
+                    }
+                }
+                let notes = settings.detectionNotes
+                if !notes.isEmpty {
+                    SettingsRow(title: tr("自动检测到的限制", "Detected limits"),
+                                detail: notes.joined(separator: " · ") + tr("。换了模型版本或服务商修复后可以重置", ". Reset after the model or provider changes")) {
+                        Button(tr("重置", "Reset")) { withAnimation(Motion.content) { settings.resetDetection() } }
+                            .buttonStyle(OutlineButtonStyle())
                     }
                 }
                 SettingsRow(title: tr("测试连接", "Test connection"), detail: testDetail, detailColor: testFailed ? Theme.danger : Theme.text3, divider: false) {
@@ -373,7 +384,7 @@ private struct ProviderEditor: View {
                 }
             }
         }
-        .animation(Motion.content, value: OpenAIClient.isKimiCodeKey(keyDraft) && !isKimiCode)
+        .animation(Motion.content, value: kimiKeyMismatch)
         .onAppear { keyDraft = settings.storedKey(for: providerID) }
     }
 
@@ -381,6 +392,7 @@ private struct ProviderEditor: View {
     private func useKimiCode() {
         withAnimation(Motion.content) {
             settings.activeProvider.baseURL = ProviderPreset.kimiCode.baseURL
+            settings.activeProvider.kind = .kimiCode
             settings.activeProvider.model = ProviderPreset.kimiCode.model
             settings.activeProvider.fetchedModels = []
             testState = .idle
@@ -418,6 +430,31 @@ private struct ProviderEditor: View {
             }
         } catch {
             withAnimation(Motion.content) { testState = .failure(error.localizedDescription) }
+        }
+    }
+}
+
+/// 接口类型：决定发送哪些专有参数。认得出的官方地址会自动设置，经代理或中转访问时在这里手动选。
+private struct ProviderKindRow: View {
+    @Environment(AppSettings.self) private var settings
+
+    var body: some View {
+        let kind = settings.activeProvider.kind
+        SettingsRow(title: tr("接口类型", "API type"),
+                    detail: tr("决定是否发送深度思考、思考强度等专有参数；经代理访问时按实际服务选择",
+                               "Decides whether provider-specific options such as thinking are sent; pick the real service when using a proxy")) {
+            PopMenuButton(trailing: true, style: OutlineButtonStyle()) {
+                ProviderPreset.allCases.map { preset in
+                    PopMenuItem(preset.menuTitle, checked: preset == kind) { settings.activeProvider.kind = preset }
+                }
+            } label: {
+                HStack(spacing: 5) {
+                    Text(kind.name)
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 8, weight: .bold))
+                }
+            }
+            .fixedSize()
         }
     }
 }

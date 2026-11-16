@@ -143,7 +143,7 @@ struct AppCommands: Commands {
             Toggle(tr("深度思考", "Deep Thinking"), isOn: Binding(
                 get: { settings.thinking }, set: { settings.thinking = $0 }))
                 .keyboardShortcut(key(.toggleThinking))
-                .disabled(!OpenAIClient.isDeepSeek(settings.baseURL))
+                .disabled(!settings.activeProvider.kind.hasThinkingToggle)
             Divider()
             Button(tr("停止生成", "Stop")) { chat.stop() }
                 .keyboardShortcut(key(.stop))

@@ -141,50 +141,107 @@ final class ChatController {
 
     // MARK: - 流式请求
 
-    /// - Parameter withImage: 是否附上当前页截图（模型拒绝图片后会以 false 重试）。
-    private func startStream(auto: Bool, withImage: Bool = true) {
+    /// 一次请求的可调整项。请求因参数问题被拒绝时，按 `recovery` 调整后重试。
+    private struct Attempt {
+        var withImage = true
+        var sendMaxTokens = true
+        /// 上下文超长又读不出真实上限时，按比例缩小预算。
+        var budgetScale = 1.0
+        var retries = 0
+        /// 原因不明时试探着去掉了截图 / max_tokens：重试成功后才记下来，避免误判后永久生效。
+        var guessedNoVision = false
+        var guessedNoMaxTokens = false
+    }
+
+    /// 已经组装好的请求，以及出错时判断原因、成功后校准估算需要的信息。
+    private struct PreparedRequest {
+        var body: Data
+        var optionalParameters: [String]
+        var maxTokens: Int?
+        var sentImage: Bool
+        /// 不含截图的 token 估算（未经校准）。
+        var estimatedTokens: Int
+    }
+
+    /// 没有学到上限时 max_tokens 最多发这么多：足够长的讲解，又不至于在按 max_tokens 计算限额的服务上占用太多。
+    private static let defaultMaxOutput = 32_768
+
+    private func startStream(auto: Bool, attempt: Attempt = Attempt()) {
         guard let reader, let questionIndex = messages.indices.last, messages[questionIndex].role == .user else { return }
+        let questionID = messages[questionIndex].id
         // 截图取提问时所在的页（重新生成时读者可能已经翻到别处）
         let page = messages[questionIndex].page ?? reader.currentPage
-        let image = withImage && settings.sendsImages ? reader.pageImage(page) : nil
-        let context = PromptBuilder.Context(
-            title: reader.title,
-            pageCount: reader.pageCount,
-            currentPage: reader.currentPage,
-            text: reader.text,
-            charLimit: settings.contextCharLimit,
-            historyLimit: settings.historyLimit,
-            tokenBudget: settings.contextTokenBudget,
-            pageImageJPEG: image,
-            explanationStyle: settings.explanationStyle
-        )
-        // 记下这条提问实际发出的文字，之后原样作为历史发送（重新生成时按当前的讲解方式重写）
-        messages[questionIndex].sentText = PromptBuilder.composeText(messages[questionIndex], context: context)
-        persist()
-        let payload = PromptBuilder.requestMessages(history: messages, context: context)
-
         let config = settings.connection
+
         var reply = ChatMessage(role: .assistant, content: "")
         reply.model = config.model
         streamingID = reply.id
         streamIsAuto = auto
         isStreaming = true
         append(reply)
-
         let id = reply.id
-        let sentImage = image != nil
-        let body = (try? JSONSerialization.data(withJSONObject: payload)) ?? Data("[]".utf8)
+
         streamTask = Task { [weak self] in
             var failure: Error?
+            var prepared: PreparedRequest?
             do {
-                for try await event in OpenAIClient.stream(config: config, messages: body) {
-                    self?.apply(event, to: id)
+                // 课件文字还没提取出来时先等一等，否则系统提示里没有课件，之后也无法和后续请求共用缓存
+                await reader.waitForPromptText()
+                try Task.checkCancellation()
+                guard let self else { return }
+                let request = try await self.prepare(questionID: questionID, page: page, config: config, attempt: attempt)
+                prepared = request
+                for try await event in OpenAIClient.stream(config: config, body: request.body) {
+                    self.apply(event, to: id)
                 }
             } catch {
                 failure = error
             }
-            self?.finish(id, auto: auto, error: failure, retryWithoutImage: sentImage ? config.model : nil)
+            self?.finish(id, auto: auto, error: failure, config: config, attempt: attempt, request: prepared)
         }
+    }
+
+    /// 组装请求：截图、上下文、max_tokens 和这个模型已知的限制。
+    private func prepare(questionID: UUID, page: Int, config: ConnectionConfig, attempt: Attempt) async throws -> PreparedRequest {
+        guard let reader else { throw CancellationError() }
+        let image = attempt.withImage && settings.sendsImages ? await reader.pageImage(page) : nil
+        try Task.checkCancellation()
+        guard let questionIndex = messages.firstIndex(where: { $0.id == questionID }) else { throw CancellationError() }
+
+        let quirks = settings.quirks(config.providerID, config.model)
+        let tokenScale = quirks.tokenScale ?? 1
+        // 估算偏低的模型按校准系数缩小预算，让实际用量仍落在设置的比例内
+        let budget = Int(Double(settings.contextTokenBudget) * attempt.budgetScale / tokenScale)
+        let context = PromptBuilder.Context(
+            title: reader.title,
+            pageCount: reader.pageCount,
+            currentPage: reader.currentPage,
+            text: reader.promptText,
+            latestText: reader.text,
+            charLimit: settings.contextCharLimit,
+            historyLimit: settings.historyLimit,
+            tokenBudget: budget,
+            pageImageJPEG: image,
+            explanationStyle: settings.explanationStyle
+        )
+        // 记下这条提问实际发出的文字，之后原样作为历史发送（重新生成时按当前的讲解方式重写）
+        messages[questionIndex].sentText = PromptBuilder.composeText(messages[questionIndex], context: context)
+        persist()
+        let built = PromptBuilder.requestMessages(history: Array(messages[...questionIndex]), context: context)
+
+        // max_tokens：把上下文窗口里输入用剩的部分留给回答（留 10% 余量），并受这个模型已知的上限约束。
+        // 不发送时服务商用自己的默认值，往往远小于留出的空间，回答容易被截断。
+        var maxTokens: Int?
+        if attempt.sendMaxTokens, quirks.maxOutput != 0 {
+            let window = settings.contextWindow(config.providerID, config.model)
+            let input = Int(Double(built.estimatedTokens) * tokenScale) + (image == nil ? 0 : TokenEstimate.image)
+            let room = window - input * 11 / 10 - 512
+            if room >= 1_024 { maxTokens = min(room, quirks.maxOutput ?? Self.defaultMaxOutput) }
+        }
+        let options = OpenAIClient.RequestOptions(maxTokens: maxTokens, omit: Set(quirks.omit))
+        let body = try OpenAIClient.makeBody(config: config, messages: built.messages, options: options)
+        return PreparedRequest(body: body.data, optionalParameters: body.optionalParameters, maxTokens: maxTokens,
+                               sentImage: image != nil, estimatedTokens: built.estimatedTokens)
     }
 
     private func apply(_ event: StreamEvent, to id: UUID) {
@@ -198,8 +255,7 @@ final class ChatController {
         scheduleFlush(id)
     }
 
-    /// - Parameter retryWithoutImage: 本次请求附带了截图时为模型名；若模型拒绝图片，去掉截图自动重试一次。
-    private func finish(_ id: UUID, auto: Bool, error: Error?, retryWithoutImage model: String?) {
+    private func finish(_ id: UUID, auto: Bool, error: Error?, config: ConnectionConfig, attempt: Attempt, request: PreparedRequest?) {
         let cancelled = Task.isCancelled || error is CancellationError || (error as? URLError)?.code == .cancelled
         // 被打断的旧请求可能晚于新请求结束，此时不能清掉新请求的状态
         if streamingID == id {
@@ -225,19 +281,71 @@ final class ChatController {
             }
             messages[index].stopped = true
         } else if let error {
-            if let model, (error as? APIError)?.isBadRequest == true, messages[index].content.isEmpty {
-                // 这个模型不支持图片：记下来，之后不再发送截图，并立即重试
-                settings.markNoVision(model)
+            if messages[index].content.isEmpty, let next = recovery(for: error, config: config, attempt: attempt, request: request) {
                 messages.remove(at: index)
                 web.call("PPT.remove", id.uuidString)
-                startStream(auto: auto, withImage: false)
+                startStream(auto: auto, attempt: next)
                 return
             }
             messages[index].error = error.localizedDescription
+        } else {
+            learn(from: messages[index], config: config, attempt: attempt, request: request)
         }
         record(messages[index], at: index)
         push(messages[index])
         persist()
+    }
+
+    /// 请求因参数问题被拒绝（400 类）时，判断原因并给出调整后的重试；不该重试时返回 nil。
+    /// 原因明确的（图片、上下文超长、max_tokens、不认识的参数）立即记下；原因不明的先试探，成功后再记。
+    private func recovery(for error: Error, config: ConnectionConfig, attempt: Attempt, request: PreparedRequest?) -> Attempt? {
+        guard attempt.retries < 3, let apiError = error as? APIError, apiError.isBadRequest, let request else { return nil }
+        let model = config.model
+        var next = attempt
+        next.retries += 1
+        next.guessedNoVision = false
+        next.guessedNoMaxTokens = false
+        switch apiError.requestProblem(sentParameters: request.optionalParameters, maxTokens: request.maxTokens) {
+        case .image:
+            guard request.sentImage else { return nil }
+            settings.markNoVision(model)
+            next.withImage = false
+        case .contextLength(let limit):
+            // 读到了真实上限就按它重算；否则（多半是本地估算偏低）缩小预算
+            if limit.map({ settings.recordContextLimit($0, config.providerID, model) }) != true {
+                guard next.budgetScale > 0.3 else { return nil }
+                next.budgetScale *= 0.7
+            }
+        case .maxTokens(let limit):
+            guard request.maxTokens != nil else { return nil }
+            settings.updateQuirks(config.providerID, model) { $0.maxOutput = limit ?? 0 }
+        case .unsupported(let parameter):
+            settings.updateQuirks(config.providerID, model) { $0.omit.append(parameter) }
+        case nil:
+            // 原因不明：依次试探去掉截图、去掉 max_tokens（每次只改一项，才知道是哪一项的问题）
+            if request.sentImage && !attempt.guessedNoVision && attempt.withImage {
+                next.withImage = false
+                next.guessedNoVision = true
+            } else if request.maxTokens != nil {
+                next.withImage = attempt.guessedNoVision ? true : attempt.withImage
+                next.sendMaxTokens = false
+                next.guessedNoMaxTokens = true
+            } else {
+                return nil
+            }
+        }
+        return next
+    }
+
+    /// 请求成功后：确认试探的结果，并用真实的 prompt token 数校准估算。
+    private func learn(from reply: ChatMessage, config: ConnectionConfig, attempt: Attempt, request: PreparedRequest?) {
+        guard !reply.content.isEmpty else { return }
+        if attempt.guessedNoVision { settings.markNoVision(config.model) }
+        if attempt.guessedNoMaxTokens { settings.updateQuirks(config.providerID, config.model) { $0.maxOutput = 0 } }
+        // 截图的 token 数各家算法差别很大，只用不带截图的请求来校准
+        if let request, !request.sentImage, let usage = reply.usage {
+            settings.calibrate(config.providerID, config.model, actual: usage.prompt, estimate: request.estimatedTokens)
+        }
     }
 
     /// 计入学习统计：只统计有内容的回答。

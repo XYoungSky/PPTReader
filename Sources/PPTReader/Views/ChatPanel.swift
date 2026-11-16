@@ -198,7 +198,7 @@ private struct Composer: View {
                 Spacer(minLength: 0)
 
                 // DeepSeek 的深度思考开关（关闭后回答更快）
-                if OpenAIClient.isDeepSeek(model.settings.baseURL) {
+                if model.settings.activeProvider.kind.hasThinkingToggle {
                     Button {
                         model.settings.thinking.toggle()
                     } label: {

@@ -33,11 +33,18 @@ struct APIProvider: Codable, Identifiable, Equatable, Sendable {
     var contextWindow: Int?
     /// 测试连接时接口报告的各模型上下文窗口（token）。
     var detectedContextWindows: [String: Int]
+    /// 接口类型，决定发送哪些专有参数（深度思考、思考强度）。按模板创建时确定，
+    /// 不再根据地址猜测，经代理或中转访问时也能用上对应的参数。
+    var kind: ProviderPreset
+    /// 请求中自动检测到的各模型限制（最大输出、不接受的参数、token 估算校准）。
+    var modelQuirks: [String: ModelQuirks]
 
-    init(id: UUID = UUID(), name: String, baseURL: String, model: String = "", keyAccount: String? = nil) {
+    init(id: UUID = UUID(), name: String, baseURL: String, model: String = "", kind: ProviderPreset? = nil, keyAccount: String? = nil) {
         self.id = id
         self.name = name
         self.baseURL = baseURL
+        self.kind = kind ?? ProviderPreset.detect(baseURL)
+        modelQuirks = [:]
         self.model = model
         fetchedModels = []
         thinking = true
@@ -62,6 +69,9 @@ struct APIProvider: Codable, Identifiable, Equatable, Sendable {
         keyAccount = try c.decodeIfPresent(String.self, forKey: .keyAccount) ?? "api-key.\(id.uuidString)"
         contextWindow = try c.decodeIfPresent(Int.self, forKey: .contextWindow)
         detectedContextWindows = (try? c.decodeIfPresent([String: Int].self, forKey: .detectedContextWindows)) ?? [:]
+        // 1.6 之前没有保存类型，按地址推断一次
+        kind = (try? c.decodeIfPresent(ProviderPreset.self, forKey: .kind)) ?? ProviderPreset.detect(baseURL)
+        modelQuirks = (try? c.decodeIfPresent([String: ModelQuirks].self, forKey: .modelQuirks)) ?? [:]
     }
 
     /// 列表中显示的副标题：主机名 · 模型。
@@ -71,11 +81,29 @@ struct APIProvider: Codable, Identifiable, Equatable, Sendable {
     }
 }
 
-/// 添加服务商时可选的模板，只用来预填名称和地址，之后都可以修改。
-enum ProviderPreset: CaseIterable, Identifiable {
+/// 某个模型在实际请求中暴露出来的限制，出错后自动记下，避免每次都先失败一次。
+struct ModelQuirks: Codable, Equatable, Sendable {
+    /// 接口接受的最大输出 token 数；0 表示不发送 `max_tokens`。
+    var maxOutput: Int?
+    /// 接口不接受、之后不再发送的可选参数（如 stream_options、thinking）。
+    var omit: [String] = []
+    /// 实际 prompt token 数与本地估算之比，用于修正估算。
+    var tokenScale: Double?
+
+    var isEmpty: Bool { maxOutput == nil && omit.isEmpty && tokenScale == nil }
+}
+
+/// 服务商模板，同时也是保存下来的接口类型：创建时预填名称和地址，并决定发送哪些专有参数。
+enum ProviderPreset: String, Codable, CaseIterable, Identifiable, Sendable {
     case deepSeek, kimiCode, kimiPlatform, custom
 
     var id: Self { self }
+
+    /// 支持 DeepSeek 的 `thinking` 开关。
+    var hasThinkingToggle: Bool { self == .deepSeek }
+
+    /// 支持 Kimi Code 的 `reasoning_effort`。
+    var hasReasoningEffort: Bool { self == .kimiCode }
 
     var name: String {
         switch self {

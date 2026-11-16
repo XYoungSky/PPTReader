@@ -2,12 +2,14 @@ import Foundation
 import Observation
 
 struct ConnectionConfig: Sendable {
+    var providerID: UUID
+    var kind: ProviderPreset
     var baseURL: String
     var apiKey: String
     var model: String
-    /// 深度思考（仅对 DeepSeek 发送 `thinking` 参数，其他服务不认识这个参数）。
+    /// 深度思考（仅对 DeepSeek 类型发送 `thinking` 参数，其他服务不认识这个参数）。
     var thinking: Bool
-    /// 思考强度（仅对 Kimi Code 发送 `reasoning_effort` 参数）。
+    /// 思考强度（仅对 Kimi Code 类型发送 `reasoning_effort` 参数）。
     var reasoningEffort: ReasoningEffort = .auto
 }
 
@@ -154,7 +156,7 @@ final class AppSettings {
             name = "\(preset.name) \(suffix)"
             suffix += 1
         }
-        let provider = APIProvider(name: name, baseURL: preset.baseURL, model: preset.model)
+        let provider = APIProvider(name: name, baseURL: preset.baseURL, model: preset.model, kind: preset)
         providers.append(provider)
         activeProviderID = provider.id
         return provider
@@ -175,9 +177,14 @@ final class AppSettings {
         change(&providers[index])
     }
 
+    /// 改地址时，认得出的官方地址顺带更新接口类型；代理、中转等地址保留原来的类型。
     var baseURL: String {
         get { activeProvider.baseURL }
-        set { activeProvider.baseURL = newValue }
+        set {
+            activeProvider.baseURL = newValue
+            let detected = ProviderPreset.detect(newValue)
+            if detected != .custom { activeProvider.kind = detected }
+        }
     }
 
     var model: String {
@@ -192,8 +199,8 @@ final class AppSettings {
 
     // MARK: - API Key
 
-    /// 当前服务商是否有可用的 Key。
-    var hasAPIKey: Bool { activeProvider.hasKey || environmentKey != nil }
+    /// 当前服务商是否可以发请求：有 Key，或者是不需要 Key 的本机 / 局域网服务（Ollama、LM Studio 等）。
+    var hasAPIKey: Bool { activeProvider.hasKey || environmentKey != nil || OpenAIClient.isLocal(activeProvider.baseURL) }
 
     /// 钥匙串中保存的 Key（设置页显示的就是它）。
     func storedKey(for id: UUID) -> String {
@@ -253,7 +260,73 @@ final class AppSettings {
 
     var connection: ConnectionConfig {
         let provider = activeProvider
-        return ConnectionConfig(baseURL: provider.baseURL, apiKey: apiKey, model: effectiveModel,
-                                thinking: provider.thinking, reasoningEffort: provider.reasoningEffort)
+        return ConnectionConfig(providerID: provider.id, kind: provider.kind, baseURL: provider.baseURL, apiKey: apiKey,
+                                model: effectiveModel, thinking: provider.thinking, reasoningEffort: provider.reasoningEffort)
+    }
+
+    // MARK: - 自动检测到的模型限制
+    //
+    // 按服务商和模型分别记录（异步请求结束时用户可能已经切换了服务商，因此都按 ID 读写）。
+
+    func quirks(_ providerID: UUID, _ model: String) -> ModelQuirks {
+        providers.first { $0.id == providerID }?.modelQuirks[model] ?? ModelQuirks()
+    }
+
+    func updateQuirks(_ providerID: UUID, _ model: String, _ change: (inout ModelQuirks) -> Void) {
+        guard !model.isEmpty else { return }
+        updateProvider(providerID) { provider in
+            var quirks = provider.modelQuirks[model] ?? ModelQuirks()
+            change(&quirks)
+            provider.modelQuirks[model] = quirks.isEmpty ? nil : quirks
+        }
+    }
+
+    /// 某个服务商与模型的上下文窗口：手动设置 > 接口报告 > 默认值。
+    func contextWindow(_ providerID: UUID, _ model: String) -> Int {
+        guard let provider = providers.first(where: { $0.id == providerID }) else { return Self.defaultContextWindow }
+        return provider.contextWindow ?? provider.detectedContextWindows[model] ?? Self.defaultContextWindow
+    }
+
+    /// 接口报错说上下文超长并给出了真实上限：记下来。手动设置的值比它还大时说明设错了，改回自动。
+    /// - Returns: 上下文窗口是否因此变小（变小了就不必再额外缩减预算）。
+    @discardableResult
+    func recordContextLimit(_ limit: Int, _ providerID: UUID, _ model: String) -> Bool {
+        let before = contextWindow(providerID, model)
+        guard limit >= 1024, limit < before else { return false }
+        updateProvider(providerID) { provider in
+            provider.detectedContextWindows[model] = limit
+            if let manual = provider.contextWindow, manual > limit { provider.contextWindow = nil }
+        }
+        return true
+    }
+
+    /// 用接口返回的真实 prompt token 数校准本地估算。只在偏差超过 15% 时才调整，
+    /// 校准值稳定下来后不再变化，避免课件摘取范围（也就是系统提示）跟着来回变动。
+    func calibrate(_ providerID: UUID, _ model: String, actual: Int, estimate: Int) {
+        guard actual > 0, estimate >= 2_000 else { return }
+        let ratio = min(max(Double(actual) / Double(estimate), 0.5), 2.5)
+        let current = quirks(providerID, model).tokenScale ?? 1
+        guard abs(ratio - current) / current > 0.15 else { return }
+        let updated = ((current + ratio) / 2 * 100).rounded() / 100
+        updateQuirks(providerID, model) { $0.tokenScale = abs(updated - 1) < 0.05 ? nil : updated }
+    }
+
+    /// 设置页显示的当前模型自动检测结果。
+    var detectionNotes: [String] {
+        var notes: [String] = []
+        if noVisionModels.contains(effectiveModel) { notes.append(tr("不支持图片", "No image input")) }
+        let quirks = quirks(activeProviderID, effectiveModel)
+        if let max = quirks.maxOutput {
+            notes.append(max == 0 ? tr("不发送最大输出", "No max_tokens") : tr("最大输出 ", "Max output ") + TokenEstimate.label(max))
+        }
+        if !quirks.omit.isEmpty { notes.append(tr("不接受 ", "Rejects ") + quirks.omit.joined(separator: ", ")) }
+        if let scale = quirks.tokenScale { notes.append(tr("token 估算 ×", "Token estimate ×") + String(format: "%.2f", scale)) }
+        return notes
+    }
+
+    /// 清除当前模型的自动检测结果，下次请求重新检测。
+    func resetDetection() {
+        noVisionModels.removeAll { $0 == effectiveModel }
+        updateProvider(activeProviderID) { $0.modelQuirks[effectiveModel] = nil }
     }
 }

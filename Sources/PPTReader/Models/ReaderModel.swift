@@ -1,6 +1,8 @@
 import AppKit
+import ImageIO
 import Observation
 import PDFKit
+import UniformTypeIdentifiers
 
 /// 当前打开的课件。
 @MainActor
@@ -19,6 +21,10 @@ final class ReaderModel {
     /// 松开鼠标后才显示选中工具条，拖选过程中不打扰。
     var selectionBarVisible = false
     private(set) var text: DocumentText?
+    /// 发给模型的课件文字。OCR 每识别几页 `text` 就会更新一次，如果直接用它，这段时间里每次请求的系统提示都不同，
+    /// 前缀缓存全部失效；所以只在拿到文字层、OCR 每完成约四分之一和全部完成时更新，最多变动几次。
+    @ObservationIgnored private(set) var promptText: DocumentText?
+    @ObservationIgnored private var promptTextOCRDone = 0
     /// OCR 进度：(已完成, 总数)；nil 表示没有需要 OCR 的页面或已完成。
     private(set) var ocrProgress: (done: Int, total: Int)?
     var continuousScroll: Bool
@@ -28,6 +34,7 @@ final class ReaderModel {
     @ObservationIgnored let pdf = PDFController()
     @ObservationIgnored var onPageChange: ((Int) -> Void)?
     @ObservationIgnored private var extraction: Task<Void, Never>?
+    @ObservationIgnored private let renderer: PageRenderer
 
     init(sourceURL: URL, pdfURL: URL, kind: CourseFileKind, document: PDFDocument, initialPage: Int) {
         self.sourceURL = sourceURL
@@ -37,6 +44,7 @@ final class ReaderModel {
         pageCount = document.pageCount
         currentPage = min(max(initialPage, 1), max(document.pageCount, 1))
         continuousScroll = kind != .slides
+        renderer = PageRenderer(url: pdfURL)
     }
 
     var title: String { sourceURL.deletingPathExtension().lastPathComponent }
@@ -62,20 +70,62 @@ final class ReaderModel {
     private func applyExtraction(_ text: DocumentText, done: Int, total: Int) {
         self.text = text
         ocrProgress = done < total ? (done, total) : nil
+        if promptText == nil || done >= total || done - promptTextOCRDone >= max(10, total / 4) {
+            promptText = text
+            promptTextOCRDone = done
+        }
+    }
+
+    /// 等到课件文字可用（首次打开时提取文字层通常不到一秒）。超时或任务取消后不再等待。
+    func waitForPromptText(timeout: Duration = .seconds(20)) async {
+        let deadline = ContinuousClock.now + timeout
+        while promptText == nil, !Task.isCancelled, ContinuousClock.now < deadline {
+            try? await Task.sleep(for: .milliseconds(100))
+        }
     }
 
     func close() {
         extraction?.cancel()
     }
 
-    /// 某一页的截图（JPEG，页码从 1 开始），供支持图像输入的模型使用。
-    func pageImage(_ number: Int) -> Data? {
-        guard let page = document.page(at: number - 1) else { return nil }
+    /// 某一页的截图（JPEG，页码从 1 开始），供支持图像输入的模型使用。在后台渲染，不卡界面。
+    func pageImage(_ number: Int) async -> Data? {
+        await renderer.jpeg(page: number)
+    }
+}
+
+/// 在后台渲染页面截图。单独打开一份文档，避免和界面上的 PDFView 争用同一个对象；最近几页的结果缓存起来，
+/// 同一页连续追问时不必重新渲染。
+actor PageRenderer {
+    private let url: URL
+    private var document: PDFDocument?
+    private var cache: [Int: Data] = [:]
+    private var recent: [Int] = []
+
+    init(url: URL) {
+        self.url = url
+    }
+
+    func jpeg(page number: Int) -> Data? {
+        if let hit = cache[number] { return hit }
+        if document == nil { document = PDFDocument(url: url) }
+        guard let page = document?.page(at: number - 1) else { return nil }
         let bounds = page.bounds(for: .mediaBox)
-        let scale = 1600 / max(bounds.width, bounds.height, 1)
+        // 截图每次都按全价计费（排在请求末尾，不会被缓存）：横向的幻灯片长边 1280 已能看清；
+        // 竖向的讲义、Word 文档字小，保留 1600
+        let longest: CGFloat = bounds.width >= bounds.height ? 1280 : 1600
+        let scale = longest / max(bounds.width, bounds.height, 1)
         let image = page.thumbnail(of: CGSize(width: bounds.width * scale, height: bounds.height * scale), for: .mediaBox)
-        guard let tiff = image.tiffRepresentation, let bitmap = NSBitmapImageRep(data: tiff) else { return nil }
-        return bitmap.representation(using: .jpeg, properties: [.compressionFactor: 0.8])
+        guard let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return nil }
+        let data = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(data, UTType.jpeg.identifier as CFString, 1, nil) else { return nil }
+        CGImageDestinationAddImage(destination, cgImage, [kCGImageDestinationLossyCompressionQuality: 0.8] as CFDictionary)
+        guard CGImageDestinationFinalize(destination) else { return nil }
+        let jpeg = data as Data
+        cache[number] = jpeg
+        recent.append(number)
+        if recent.count > 6 { cache[recent.removeFirst()] = nil }
+        return jpeg
     }
 }
 

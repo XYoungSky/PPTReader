@@ -36,7 +36,11 @@ enum TextExtractor {
             return
         }
         // 单独打开一份文档，避免和界面上的 PDFView 争用同一个对象。
-        guard let document = PDFDocument(url: pdfURL) else { return }
+        guard let document = PDFDocument(url: pdfURL) else {
+            // 打不开也要回调一次，等待课件文字的请求不必一直等到超时
+            await update(DocumentText(pages: []), 0, 0)
+            return
+        }
         var text = DocumentText(pages: (0..<document.pageCount).map { index in
             clean(document.page(at: index)?.string ?? "")
         })
