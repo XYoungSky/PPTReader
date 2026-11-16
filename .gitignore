@@ -18,3 +18,5 @@ xcuserdata/
 .env.*
 !.env.example
 !.env.sample
+
+*.zip

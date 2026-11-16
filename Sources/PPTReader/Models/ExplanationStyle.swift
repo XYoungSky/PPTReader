@@ -4,19 +4,36 @@ import Foundation
 ///
 /// 写给模型的是"这一项具体怎么写"，而不是一组偏好开关；
 /// 同时明确告诉模型不要在回答里提起这些设置，避免出现"按你的设置，这里不举例"之类的话。
+///
+/// 1.6 起这段要求附在每次提问的末尾（见 `PromptBuilder`），而不是写进系统提示：
+/// 对话越长，系统提示末尾的要求离当前问题越远，模型越容易忘记画图、举例；
+/// 系统提示也因此对同一份课件保持不变，服务商的前缀缓存更容易命中。
 struct ExplanationStyle: Equatable {
     var detail: Detail = .normal
     var diagrams: Diagrams = .normal
     var examples: Examples = .necessary
+    /// 学生自己写的额外要求，附在几项选择之后。
+    var custom = ""
+
+    static let customLimit = 600
 
     enum Detail: String, CaseIterable {
         case concise, normal, detailed
 
         var title: String {
             switch self {
-            case .concise: tr("简洁清晰", "Concise")
-            case .normal: tr("正常", "Normal")
+            case .concise: tr("简洁", "Concise")
+            case .normal: tr("适中", "Balanced")
             case .detailed: tr("详细", "Detailed")
+            }
+        }
+
+        /// 设置页中对当前选项的说明。
+        var summary: String {
+            switch self {
+            case .concise: tr("只讲核心意思和用得上的公式，一般两三段", "Core idea and the formulas that matter, usually two or three paragraphs")
+            case .normal: tr("核心概念讲透，难点多写，简单处从简", "Explain the core ideas properly; more words on the hard parts")
+            case .detailed: tr("讲清为什么、每个符号和推导步骤，补上前提知识", "Why it works, every symbol and step, plus the prerequisites")
             }
         }
 
@@ -40,9 +57,17 @@ struct ExplanationStyle: Equatable {
 
         var title: String {
             switch self {
-            case .minimal: tr("尽量不用", "Minimal")
-            case .normal: tr("正常", "Normal")
-            case .frequent: tr("多用 SVG", "More SVG")
+            case .minimal: tr("少用", "Few")
+            case .normal: tr("适中", "Balanced")
+            case .frequent: tr("多用", "Many")
+            }
+        }
+
+        var summary: String {
+            switch self {
+            case .minimal: tr("用文字和公式讲，文字说不清的结构才画", "Words and formulas; draw only when words can't do it")
+            case .normal: tr("讲解页面或难点时，能画出来的关系就配一张图", "Add a diagram when a page or hard idea has something drawable")
+            case .frequent: tr("每次讲解至少一张图，结构、流程、图像都画出来", "At least one diagram per explanation; draw structures, processes, graphs")
             }
         }
 
@@ -52,11 +77,11 @@ struct ExplanationStyle: Equatable {
                 tr("图：尽量不画。用文字和公式讲清楚，只有文字实在说不清的结构或几何关系才画。课件里原有的图仍然要讲。",
                    "Diagrams: avoid them. Explain with words and formulas, and only draw when a structure or geometric relationship can't reasonably be put into words. Figures already in the deck still need explaining.")
             case .normal:
-                tr("图：需要时画。结构、流程、几何或数量关系画出来明显更好懂时，画一张简洁的 SVG 或 Mermaid 图，并用一两句话说明该看哪里；文字说得清就不画。",
-                   "Diagrams: when they help. If a structure, process, geometric or quantitative relationship is clearly easier to see in a picture, draw one clean SVG or Mermaid diagram and say in a sentence or two what to look at. If words do the job, don't draw.")
+                tr("图：讲解一页、一个概念或一段推导时，只要里面有能画出来的东西（结构、流程、层次、函数图像、几何或数量关系），就画一张 SVG 或 Mermaid 图，并用一两句话说明该看哪里。随口问的小问题、纯粹的定义或翻译不用画。",
+                   "Diagrams: when explaining a page, a concept or a derivation, draw one SVG or Mermaid diagram whenever there's something drawable in it (a structure, process, hierarchy, function graph, geometric or quantitative relationship), and say in a sentence or two what to look at. Quick questions, plain definitions and translations don't need one.")
             case .frequent:
-                tr("图：多画。凡是涉及结构、流程、层次、几何或数量关系的内容，都配一张 SVG 或 Mermaid 示意图，并用一两句话说明图里该看什么。图是为了帮助理解，不画装饰性的图。",
-                   "Diagrams: use them generously. Whenever the content involves a structure, process, hierarchy, geometric or quantitative relationship, add an SVG or Mermaid diagram and say in a sentence or two what to look at. Diagrams are there to aid understanding, never as decoration.")
+                tr("图：多画。每次讲解至少配一张 SVG 或 Mermaid 图，只有标题页、目录这类没有实质内容的情况除外；内容里有几个不同的结构、流程、函数图像、几何或数量关系时，分别配图。每张图用一两句话说明该看哪里。图是为了帮助理解，不画装饰性的图。",
+                   "Diagrams: draw generously. Every explanation gets at least one SVG or Mermaid diagram, except for title or contents pages with no real content; when the material has several distinct structures, processes, graphs, geometric or quantitative relationships, give each its own diagram. Say in a sentence or two what to look at in each. Diagrams are there to aid understanding, never as decoration.")
             }
         }
     }
@@ -66,9 +91,17 @@ struct ExplanationStyle: Equatable {
 
         var title: String {
             switch self {
-            case .none: tr("不要例题", "None")
-            case .necessary: tr("必要时", "When needed")
-            case .everyConcept: tr("每个知识点", "Each concept")
+            case .none: tr("不出", "None")
+            case .necessary: tr("需要时", "When useful")
+            case .everyConcept: tr("每个知识点", "Every concept")
+            }
+        }
+
+        var summary: String {
+            switch self {
+            case .none: tr("直接讲知识本身，课件里原有的题照常讲", "Explain the ideas directly; problems in the deck are still covered")
+            case .necessary: tr("具体算一遍明显更好懂时举一道", "One worked example when a calculation would make it click")
+            case .everyConcept: tr("每个实质性的知识点后面跟一道例题", "A worked example after every substantive concept")
             }
         }
 
@@ -87,21 +120,35 @@ struct ExplanationStyle: Equatable {
         }
     }
 
-    var prompt: String {
+    /// 设置页「自定义要求」下方的快捷短语，点按后追加到文本末尾。
+    static var customSuggestions: [(title: String, text: String)] {
+        [
+            (tr("术语附英文", "Bilingual terms"), tr("专业术语第一次出现时附上英文原词。", "Give the Chinese term alongside each technical term the first time it appears.")),
+            (tr("多用类比", "Analogies"), tr("抽象的概念先用一个贴切的生活类比引入，再讲严格的定义。", "Introduce abstract ideas with a fitting everyday analogy before the formal definition.")),
+            (tr("推导写完整", "Full derivations"), tr("公式推导不要跳步，每一步写出依据。", "Don't skip steps in derivations; justify each one.")),
+            (tr("联系考试", "Exam focus"), tr("讲完后指出这部分常见的考法和容易丢分的地方。", "After explaining, point out how this is usually examined and where marks are commonly lost.")),
+            (tr("先给结论", "Conclusion first"), tr("先用一两句话给出结论，再展开解释。", "State the conclusion in a sentence or two first, then explain.")),
+        ]
+    }
+
+    var trimmedCustom: String {
+        String(custom.trimmingCharacters(in: .whitespacesAndNewlines).prefix(Self.customLimit))
+    }
+
+    /// 附在每次提问末尾的讲解方式。系统提示里说明了这段内容的用法和优先级。
+    var block: String {
         var rules = [detail.instruction, diagrams.instruction, examples.instruction]
         // 只有组合本身有张力时才补充说明，平时不多写一句
         if detail == .concise, let kept = keptDespiteConcise {
             rules.append(tr("简短指的是文字精炼：上面要求的\(kept.zh)仍然要有，只是写得紧凑。",
                             "Short refers to the wording: still include the \(kept.en) asked for above, just keep them compact."))
         }
-        return [
-            tr("## 学生选的讲解方式", "## How this student wants things explained"),
-            "",
-            tr("学生在设置里选了下面这些讲解方式，照着写就行，但不要在回答里提到这些设置，比如不要说“按你的设置，这里不举例”。学生在消息里直接提的要求（“详细点”“举个例子”“画个图”“出几道题”等）优先于这些设置。",
-               "The student picked the following in their settings. Follow them, but don't mention the settings in your answers (no \"per your settings, I'll skip the example\"). Anything the student asks for directly in a message, such as more detail, an example, a diagram or a quiz, takes precedence."),
-            "",
-            rules.map { "- " + $0 }.joined(separator: "\n"),
-        ].joined(separator: "\n")
+        var lines = [tr("【讲解方式】", "[Explanation style]")] + rules.map { "- " + $0 }
+        let custom = trimmedCustom
+        if !custom.isEmpty {
+            lines.append(tr("- 学生自己写的要求：", "- The student's own requests: ") + custom.replacingOccurrences(of: "\n", with: " "))
+        }
+        return lines.joined(separator: "\n")
     }
 
     /// 简洁模式下仍要保留的内容：只列出实际选了"多用"的那几项。

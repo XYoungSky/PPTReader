@@ -9,8 +9,8 @@ enum StatsWindow {
     static func show() {
         guard let model = SettingsWindow.model else { return }
         if window == nil {
-            let hosting = NSHostingController(rootView: StatsView(stats: model.stats) { [weak model] url in
-                model?.openDeck(url)
+            let hosting = NSHostingController(rootView: StatsView(stats: model.stats, library: model.library) { [weak model] url in
+                if url.hasDirectoryPath { model?.openFolder(url) } else { model?.openDeck(url) }
                 // 回到主窗口
                 NSApp.windows.first { $0.identifier?.rawValue.hasPrefix("main") == true || $0.title == "PPTReader" }?
                     .makeKeyAndOrderFront(nil)
@@ -67,7 +67,9 @@ enum StatsMetric: String, CaseIterable, Identifiable {
 
 struct StatsView: View {
     let stats: StatsStore
-    /// 点按课件时在主窗口中打开。
+    /// 用来判断课件属于哪个课程文件夹。
+    let library: CourseLibrary
+    /// 点按课件或课程时在主窗口中打开（课程以文件夹 URL 传入）。
     let openDeck: (URL) -> Void
     @AppStorage("stats.period") private var period: StatsSummary.Period = .week
     @AppStorage("stats.metric") private var metric: StatsMetric = .time
@@ -85,7 +87,9 @@ struct StatsView: View {
                     tiles(summary)
                     chartCard(summary)
                     HeatmapCard(year: StudyCalendar(log: log), metric: metric)
-                    if !summary.decks.isEmpty { DeckList(rows: summary.decks, openDeck: openDeck) }
+                    if !summary.decks.isEmpty {
+                        DeckList(rows: summary.decks, roots: courseRoots, openDeck: openDeck)
+                    }
                     if summary.models.contains(where: { !$0.name.isEmpty }) { ModelList(rows: summary.models) }
                 }
             }
@@ -99,6 +103,11 @@ struct StatsView: View {
         .scrollIndicators(.never)
         .background(Theme.panel)
         .ignoresSafeArea()
+    }
+
+    /// 打开过的课程文件夹（当前的排在最前）。
+    private var courseRoots: [URL] {
+        ([library.rootURL].compactMap { $0 } + library.recentFolders)
     }
 
     private func header(_ summary: StatsSummary) -> some View {
@@ -629,29 +638,84 @@ private struct WidthDrivenLayout: Layout {
 
 // MARK: - 排行
 
+/// 课件所在的位置：属于哪个打开过的课程文件夹，以及其中的子文件夹。
+struct DeckLocation {
+    /// 课程文件夹；课件不在任何打开过的课程文件夹里时，是它所在的文件夹。
+    let course: URL
+    /// 课程文件夹内的子文件夹，如 ["第 3 章"]。
+    let subfolders: [String]
+    let isKnownCourse: Bool
+
+    init(path: String, roots: [URL]) {
+        let folder = URL(fileURLWithPath: path).deletingLastPathComponent().standardizedFileURL
+        let root = roots.map(\.standardizedFileURL)
+            .filter { folder.path == $0.path || folder.path.hasPrefix($0.path + "/") }
+            .max { $0.path.count < $1.path.count }
+        course = root ?? folder
+        isKnownCourse = root != nil
+        subfolders = root.map { folder.path.dropFirst($0.path.count).split(separator: "/").map(String.init) } ?? []
+    }
+
+    var courseName: String { course.lastPathComponent }
+
+    /// 例如「高等数学 › 第 3 章」。
+    var breadcrumb: String { ([courseName] + subfolders).joined(separator: " › ") }
+
+    /// 课程文件夹的路径，主目录缩写为 ~。
+    var coursePath: String { (course.path as NSString).abbreviatingWithTildeInPath }
+}
+
+private enum DeckGrouping: String, CaseIterable {
+    case deck, course
+
+    var title: String {
+        switch self {
+        case .deck: tr("课件", "Decks")
+        case .course: tr("课程", "Courses")
+        }
+    }
+}
+
 private struct DeckList: View {
     let rows: [StatsSummary.DeckRow]
+    let roots: [URL]
     let openDeck: (URL) -> Void
+    @AppStorage("stats.deckGrouping") private var grouping: DeckGrouping = .deck
     @ViewState private var showsAll = false
 
+    private struct Item: Identifiable {
+        let id: String
+        let icon: String
+        let title: String
+        let subtitle: String
+        let detail: String
+        let value: Double
+        let help: String
+        let target: URL?
+    }
+
     var body: some View {
-        let byTime = rows.contains { $0.seconds >= 60 }
-        let peak = rows.map { byTime ? $0.seconds : Double($0.interactions) }.max() ?? 0
-        let visible = showsAll ? rows : Array(rows.prefix(6))
-        RankCard(title: tr("课件", "Decks")) {
-            ForEach(visible) { row in
-                let exists = FileManager.default.fileExists(atPath: row.path)
+        let items = grouping == .deck ? deckItems : courseItems
+        let peak = items.map(\.value).max() ?? 0
+        let visible = showsAll ? items : Array(items.prefix(6))
+        RankCard(title: tr("课件与课程", "Decks & courses"), trailing: AnyView(
+            SegmentedPicker(selection: $grouping, options: DeckGrouping.allCases.map { ($0, $0.title) })
+        )) {
+            ForEach(visible) { item in
                 RankRow(
-                    icon: "doc.text",
-                    title: row.name,
-                    detail: detail(row),
-                    fraction: peak > 0 ? (byTime ? row.seconds : Double(row.interactions)) / peak : 0,
-                    help: row.path,
-                    action: exists ? { openDeck(URL(fileURLWithPath: row.path)) } : nil
+                    icon: item.icon,
+                    title: item.title,
+                    subtitle: item.subtitle,
+                    detail: item.detail,
+                    fraction: peak > 0 ? item.value / peak : 0,
+                    help: item.help,
+                    action: item.target.map { url in { openDeck(url) } }
                 )
             }
-            if rows.count > 6 {
-                Button(showsAll ? tr("收起", "Show less") : tr("显示全部 \(rows.count) 份", "Show all \(rows.count)")) {
+            if items.count > 6 {
+                Button(showsAll ? tr("收起", "Show less")
+                       : (grouping == .deck ? tr("显示全部 \(items.count) 份", "Show all \(items.count)")
+                                            : tr("显示全部 \(items.count) 门", "Show all \(items.count)"))) {
                     withAnimation(Motion.snappy) { showsAll.toggle() }
                 }
                 .buttonStyle(TextButtonStyle(font: .system(size: 12)))
@@ -659,13 +723,60 @@ private struct DeckList: View {
                 .padding(.top, 2)
             }
         }
+        .animation(Motion.content, value: grouping)
     }
 
-    private func detail(_ row: StatsSummary.DeckRow) -> String {
+    /// 有阅读时长时按时长排，否则按问答次数。
+    private var byTime: Bool { rows.contains { $0.seconds >= 60 } }
+
+    private var deckItems: [Item] {
+        rows.map { row in
+            let location = DeckLocation(path: row.path, roots: roots)
+            let exists = FileManager.default.fileExists(atPath: row.path)
+            return Item(
+                id: row.path,
+                icon: "doc.text",
+                title: row.name,
+                subtitle: location.breadcrumb + (exists ? "" : tr("（文件已移动或删除）", " (moved or deleted)")),
+                detail: detail(seconds: row.seconds, pages: row.pages.count, interactions: row.interactions),
+                value: byTime ? row.seconds : Double(row.interactions),
+                help: (row.path as NSString).abbreviatingWithTildeInPath,
+                target: exists ? URL(fileURLWithPath: row.path) : nil
+            )
+        }
+    }
+
+    private var courseItems: [Item] {
+        var groups: [URL: (location: DeckLocation, rows: [StatsSummary.DeckRow])] = [:]
+        for row in rows {
+            let location = DeckLocation(path: row.path, roots: roots)
+            groups[location.course, default: (location, [])].rows.append(row)
+        }
+        return groups.values.map { group in
+            let seconds = group.rows.reduce(0) { $0 + $1.seconds }
+            let pages = group.rows.reduce(0) { $0 + $1.pages.count }
+            let interactions = group.rows.reduce(0) { $0 + $1.interactions }
+            let count = group.rows.count
+            let exists = FileManager.default.fileExists(atPath: group.location.course.path)
+            return Item(
+                id: group.location.course.path,
+                icon: group.location.isKnownCourse ? "books.vertical" : "folder",
+                title: group.location.courseName,
+                subtitle: tr("\(count) 份课件 · ", count == 1 ? "1 deck · " : "\(count) decks · ") + group.location.coursePath,
+                detail: detail(seconds: seconds, pages: pages, interactions: interactions),
+                value: byTime ? seconds : Double(interactions),
+                help: group.location.coursePath,
+                target: exists ? URL(fileURLWithPath: group.location.course.path, isDirectory: true) : nil
+            )
+        }
+        .sorted { ($0.value, $0.title) > ($1.value, $1.title) }
+    }
+
+    private func detail(seconds: Double, pages: Int, interactions: Int) -> String {
         var parts: [String] = []
-        if row.seconds >= 60 { parts.append(StatsFormat.duration(row.seconds)) }
-        if !row.pages.isEmpty { parts.append(tr("\(row.pages.count) 页", row.pages.count == 1 ? "1 page" : "\(row.pages.count) pages")) }
-        if row.interactions > 0 { parts.append(tr("\(row.interactions) 次问答", row.interactions == 1 ? "1 Q&A" : "\(row.interactions) Q&As")) }
+        if seconds >= 60 { parts.append(StatsFormat.duration(seconds)) }
+        if pages > 0 { parts.append(tr("\(pages) 页", pages == 1 ? "1 page" : "\(pages) pages")) }
+        if interactions > 0 { parts.append(tr("\(interactions) 次问答", interactions == 1 ? "1 Q&A" : "\(interactions) Q&As")) }
         return parts.joined(separator: " · ")
     }
 }
@@ -695,14 +806,19 @@ private struct ModelList: View {
 
 private struct RankCard<Content: View>: View {
     let title: String
+    var trailing: AnyView?
     @ViewBuilder let content: Content
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(title)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(Theme.text2)
-                .padding(.leading, 4)
+            HStack {
+                Text(title)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Theme.text2)
+                    .padding(.leading, 4)
+                Spacer()
+                trailing
+            }
             VStack(alignment: .leading, spacing: 2) {
                 content
             }
@@ -717,6 +833,7 @@ private struct RankCard<Content: View>: View {
 private struct RankRow: View {
     let icon: String
     let title: String
+    var subtitle: String?
     let detail: String
     let fraction: Double
     let help: String
@@ -746,11 +863,20 @@ private struct RankRow: View {
                     .font(.system(size: 12))
                     .foregroundStyle(Theme.text3)
                     .frame(width: 16)
-                Text(title)
-                    .font(monospaced ? .system(size: 12.5, design: .monospaced) : .system(size: 13))
-                    .foregroundStyle(Theme.text)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(title)
+                        .font(monospaced ? .system(size: 12.5, design: .monospaced) : .system(size: 13))
+                        .foregroundStyle(Theme.text)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    if let subtitle {
+                        Text(subtitle)
+                            .font(.system(size: 11))
+                            .foregroundStyle(Theme.text3)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                }
                 Spacer(minLength: 12)
                 Text(detail)
                     .font(.system(size: 12).monospacedDigit())

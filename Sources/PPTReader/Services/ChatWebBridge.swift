@@ -7,6 +7,8 @@ enum WebEvent {
     case copy(String)
     case retry(UUID)
     case regenerate(UUID)
+    /// 回答被截断后接着写。
+    case continueAnswer(UUID)
     case quick(QuickAction)
     case contextMenu(WebContextInfo)
     /// 点按图表放大查看。
@@ -78,6 +80,8 @@ final class ChatWebBridge: NSObject {
             if let id = (dict["id"] as? String).flatMap(UUID.init) { onEvent?(.retry(id)) }
         case "regenerate":
             if let id = (dict["id"] as? String).flatMap(UUID.init) { onEvent?(.regenerate(id)) }
+        case "continue":
+            if let id = (dict["id"] as? String).flatMap(UUID.init) { onEvent?(.continueAnswer(id)) }
         case "quick":
             if let action = (dict["action"] as? String).flatMap(QuickAction.init) { onEvent?(.quick(action)) }
         case "contextmenu":

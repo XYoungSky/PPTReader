@@ -4,6 +4,8 @@ enum StreamEvent: Sendable {
     case reasoning(String)
     case content(String)
     case usage(TokenUsage)
+    /// 生成结束的原因，如 stop、length（达到长度上限）。
+    case finish(String)
 }
 
 enum APIError: LocalizedError {
@@ -66,8 +68,8 @@ enum APIError: LocalizedError {
 
 /// 测试连接的结果。
 enum ConnectionCheck {
-    /// 接口返回了模型列表。
-    case models([String])
+    /// 接口返回了模型列表，以及其中报告了上下文窗口的模型。
+    case models([String], windows: [String: Int])
     /// 接口不提供模型列表，但用当前模型发送的请求成功了。
     case reachable
 }
@@ -142,6 +144,9 @@ enum OpenAIClient {
                             if let content = delta["content"] as? String, !content.isEmpty {
                                 continuation.yield(.content(content))
                             }
+                        }
+                        if let reason = (json["choices"] as? [[String: Any]])?.first?["finish_reason"] as? String {
+                            continuation.yield(.finish(reason))
                         }
                         // 大多数服务把 usage 放在顶层（其余分片为 null），Kimi 放在最后一个 choice 里
                         let choiceUsage = (json["choices"] as? [[String: Any]])?.first?["usage"] as? [String: Any]
@@ -221,21 +226,38 @@ enum OpenAIClient {
     }
 
     /// 获取模型列表，同时用来测试连接是否可用。
-    static func listModels(config: ConnectionConfig) async throws -> [String] {
+    static func listModels(config: ConnectionConfig) async throws -> (names: [String], windows: [String: Int]) {
         var request = try request(config, path: "models")
         request.timeoutInterval = 20
         let (data, response) = try await session.data(for: request)
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard (200..<300).contains(status) else { throw httpError(status, data, config) }
         let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
-        let models = (json?["data"] as? [[String: Any]])?.compactMap { $0["id"] as? String } ?? []
-        return models.sorted()
+        let entries = json?["data"] as? [[String: Any]] ?? []
+        var windows: [String: Int] = [:]
+        for entry in entries {
+            if let id = entry["id"] as? String, let window = contextWindow(in: entry) { windows[id] = window }
+        }
+        return (entries.compactMap { $0["id"] as? String }.sorted(), windows)
+    }
+
+    /// 有些接口会在模型列表里报告上下文长度（OpenRouter、vLLM、部分国内服务商），字段名各不相同。
+    private static func contextWindow(in entry: [String: Any]) -> Int? {
+        let keys = ["context_length", "context_window", "max_context_length", "max_model_len", "max_input_tokens", "context_size"]
+        for key in keys {
+            if let value = (entry[key] as? NSNumber)?.intValue, value >= 1024 { return value }
+        }
+        if let top = entry["top_provider"] as? [String: Any], let value = (top["context_length"] as? NSNumber)?.intValue, value >= 1024 {
+            return value
+        }
+        return nil
     }
 
     /// 测试连接：优先获取模型列表；接口不提供列表（404 / 405）时，用当前模型发一个极短的请求。
     static func testConnection(config: ConnectionConfig) async throws -> ConnectionCheck {
         do {
-            return .models(try await listModels(config: config))
+            let list = try await listModels(config: config)
+            return .models(list.names, windows: list.windows)
         } catch APIError.http(let code, _) where code == 404 || code == 405 {
             guard !config.model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw APIError.missingModel }
             try await ping(config: config)

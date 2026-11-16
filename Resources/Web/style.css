@@ -653,3 +653,8 @@ body.is-empty .edge-fade { display: none; }
     transition-duration: 0.001ms !important;
   }
 }
+
+/* 回答被截断：接着写 */
+.msg-foot .ghost-btn.continue { color: var(--accent); margin-left: 2px; }
+.msg-foot .ghost-btn.continue:hover { background: var(--accent-soft); color: var(--accent); }
+.msg.assistant:not(:last-child) .continue { display: none; }

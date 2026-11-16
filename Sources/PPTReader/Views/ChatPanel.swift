@@ -63,6 +63,7 @@ struct ChatPanel: View {
             .separator,
             PopMenuItem(tr("清空对话…", "Clear Chat…"), icon: "trash", destructive: true, enabled: model.chat.hasMessages) { confirmClear() },
             PopMenuItem(tr("学习统计", "Statistics"), icon: "chart.bar.xaxis", shortcut: ShortcutStore.shared.label(for: .statistics)) { StatsWindow.show() },
+            PopMenuItem(tr("讲解风格…", "Explanation Style…"), icon: "slider.horizontal.3") { SettingsWindow.show(.explanationStyle) },
             PopMenuItem(tr("设置…", "Settings…"), icon: "gearshape", shortcut: "⌘,") { SettingsWindow.show() },
         ]
         return items

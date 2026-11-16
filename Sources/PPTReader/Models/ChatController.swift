@@ -143,8 +143,10 @@ final class ChatController {
 
     /// - Parameter withImage: 是否附上当前页截图（模型拒绝图片后会以 false 重试）。
     private func startStream(auto: Bool, withImage: Bool = true) {
-        guard let reader else { return }
-        let image = withImage && settings.sendsImages ? reader.currentPageImage() : nil
+        guard let reader, let questionIndex = messages.indices.last, messages[questionIndex].role == .user else { return }
+        // 截图取提问时所在的页（重新生成时读者可能已经翻到别处）
+        let page = messages[questionIndex].page ?? reader.currentPage
+        let image = withImage && settings.sendsImages ? reader.pageImage(page) : nil
         let context = PromptBuilder.Context(
             title: reader.title,
             pageCount: reader.pageCount,
@@ -152,9 +154,13 @@ final class ChatController {
             text: reader.text,
             charLimit: settings.contextCharLimit,
             historyLimit: settings.historyLimit,
+            tokenBudget: settings.contextTokenBudget,
             pageImageJPEG: image,
             explanationStyle: settings.explanationStyle
         )
+        // 记下这条提问实际发出的文字，之后原样作为历史发送（重新生成时按当前的讲解方式重写）
+        messages[questionIndex].sentText = PromptBuilder.composeText(messages[questionIndex], context: context)
+        persist()
         let payload = PromptBuilder.requestMessages(history: messages, context: context)
 
         let config = settings.connection
@@ -187,6 +193,7 @@ final class ChatController {
         case .reasoning(let text): messages[index].reasoning = (messages[index].reasoning ?? "") + text
         case .content(let text): messages[index].content += text
         case .usage(let usage): messages[index].usage = usage
+        case .finish(let reason): messages[index].truncated = reason == "length" ? true : nil
         }
         scheduleFlush(id)
     }
@@ -273,6 +280,9 @@ final class ChatController {
             retry(id)
         case .regenerate(let id):
             if let message = messages.first(where: { $0.id == id }), message.role == .assistant { retry(id) }
+        case .continueAnswer(let id):
+            // 只有最后一条回答被截断时才能接着写
+            if messages.last?.id == id, messages.last?.truncated == true, !isStreaming { perform(.continuation) }
         case .quick(let action):
             perform(.quick(action))
         case .contextMenu(let info):
@@ -379,6 +389,7 @@ final class ChatController {
             "auto": message.isAuto,
             "streaming": message.id == streamingID,
             "stopped": message.stopped,
+            "truncated": message.truncated == true,
         ]
         if let reasoning = message.reasoning { dict["reasoning"] = reasoning }
         if let page = message.page { dict["page"] = page }

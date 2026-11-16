@@ -82,6 +82,55 @@
     return out.join('\n');
   }
 
+  // ---------------------------------------------------------------- 裸 SVG 补成代码块
+  // 模型偶尔不写 ```svg 直接输出 <svg>。Markdown 的 HTML 块遇到空行就结束，
+  // 后半截会被当成段落甚至缩进代码块，图因此断掉；这里先把整段 <svg>…</svg> 包进代码块。
+
+  function fenceRawSvg(src) {
+    if (!/<svg[\s>]/i.test(src)) return src;
+    const lines = src.split('\n');
+    const out = [];
+    let fence = null;
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      if (fence) {
+        out.push(line);
+        const m = /^\s*(`{3,}|~{3,})\s*$/.exec(line);
+        if (m && m[1][0] === fence[0] && m[1].length >= fence.length) fence = null;
+        continue;
+      }
+      const open = /^\s*(`{3,}|~{3,})/.exec(line);
+      if (open) {
+        fence = open[1];
+        out.push(line);
+        continue;
+      }
+      const start = /^(\s*)(<\?xml[^>]*>\s*)?<svg[\s>]/i.exec(line);
+      if (!start) {
+        out.push(line);
+        continue;
+      }
+      // 找到对应的 </svg>；还没输出完（流式）时一直包到末尾
+      const indent = start[1];
+      const body = [];
+      let rest = null;
+      let j = i;
+      for (; j < lines.length; j++) {
+        const close = lines[j].search(/<\/svg>/i);
+        if (close !== -1) {
+          body.push(lines[j].slice(0, close + 6));
+          rest = lines[j].slice(close + 6);
+          break;
+        }
+        body.push(lines[j]);
+      }
+      out.push(indent + '```svg', ...body.map((l) => l.replace(/^\s*$/, '')), indent + '```');
+      if (rest && rest.trim()) out.push(indent + rest.trim());
+      i = j;
+    }
+    return out.join('\n');
+  }
+
   function placeholder(store, tex, display) {
     store.push({ tex, display });
     return PH_OPEN + (store.length - 1) + PH_CLOSE;
@@ -238,7 +287,7 @@
     return `<button type="button" class="icon-btn figure-expand" data-action="expand-figure" title="${t('放大查看', 'Enlarge')}" aria-label="${t('放大查看', 'Enlarge')}">${ICON_EXPAND}</button>`;
   }
 
-  md.renderer.rules.fence = (tokens, idx) => {
+  md.renderer.rules.fence = (tokens, idx, options, env) => {
     const token = tokens[idx];
     const info = token.info ? md.utils.unescapeAll(token.info).trim() : '';
     const lang = (info.split(/\s+/)[0] || '').toLowerCase();
@@ -250,12 +299,20 @@
     }
     const looksLikeSvg = /^\s*(<\?xml[^>]*>\s*)?<svg[\s>]/i.test(code);
     if (lang === 'svg' || (looksLikeSvg && ['', 'xml', 'html'].includes(lang))) {
-      const complete = /<\/svg>\s*$/i.test(code);
-      const canvas = complete
-        ? `<div class="svg-canvas">${code.replace(/^\s*<\?xml[^>]*>/i, '')}</div>`
-        : `<div class="svg-canvas pending"><span class="figure-hint">${t('正在绘制…', 'Drawing…')}</span></div>`;
+      // 只取 <svg>…</svg> 本身，代码块里前后多写的说明文字不影响画图
+      const start = code.search(/<svg[\s>]/i);
+      const end = code.toLowerCase().lastIndexOf('</svg>');
+      const complete = start !== -1 && end > start;
+      let canvas;
+      if (complete) {
+        canvas = `<div class="svg-canvas">${code.slice(start, end + 6)}</div>`;
+      } else if (env && env.streaming) {
+        canvas = `<div class="svg-canvas pending"><span class="figure-hint">${t('正在绘制…', 'Drawing…')}</span></div>`;
+      } else {
+        canvas = `<div class="svg-canvas pending"><span class="figure-hint error">${t('这张图没有输出完整', 'This diagram was cut off')}</span></div>`;
+      }
       return `<figure class="svg-figure">${canvas}${complete ? expandButton() : ''}` +
-        `<details class="figure-source"><summary>${t('源码', 'Source')}</summary>${codeBlock(code, 'xml')}</details></figure>`;
+        `<details class="figure-source"${complete || (env && env.streaming) ? '' : ' open'}><summary>${t('源码', 'Source')}</summary>${codeBlock(code, 'xml')}</details></figure>`;
     }
     return codeBlock(code, lang, { preview: lang === 'html' });
   };
@@ -269,12 +326,21 @@
 
   // ---------------------------------------------------------------- 清洗
 
+  // <use> 默认会被 DOMPurify 去掉；SVG 最终以 <img> 显示（不加载外部资源、不执行脚本），
+  // 这里放行它，但只允许引用同一张图里的元素（href="#id"）。
   const PURIFY_CONFIG = {
     FORCE_BODY: true,
+    ADD_TAGS: ['use'],
     ADD_ATTR: ['target'],
     FORBID_TAGS: ['script', 'iframe', 'object', 'embed', 'form', 'link', 'meta', 'base', 'frame', 'frameset'],
     FORBID_ATTR: ['autofocus'],
   };
+
+  DOMPurify.addHook('uponSanitizeAttribute', (node, data) => {
+    if (node.nodeName.toLowerCase() === 'use' && /^(xlink:)?href$/i.test(data.attrName) && !/^#/.test(data.attrValue || '')) {
+      data.keepAttr = false;
+    }
+  });
 
   // ---------------------------------------------------------------- DOM 后处理
 
@@ -344,6 +410,19 @@
     }
   }
 
+  /**
+   * 用 XML 规则序列化：outerHTML 按 HTML 规则输出，&nbsp;、未声明的 xlink: 前缀等
+   * 在 SVG 图片里都是语法错误，整张图会加载失败。
+   */
+  function svgMarkup(svg) {
+    try {
+      return new XMLSerializer().serializeToString(svg);
+    } catch (_) {
+      if (!svg.getAttribute('xmlns')) svg.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+      return svg.outerHTML;
+    }
+  }
+
   // SVG 统一转换为 <img>：样式与脚本被完全隔离，不会影响页面
   function isolateSvgs(root) {
     for (const svg of Array.from(root.querySelectorAll('svg'))) {
@@ -353,13 +432,12 @@
         svg.querySelectorAll('style').forEach((style) => style.remove());
         continue;
       }
-      if (!svg.getAttribute('xmlns')) svg.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
       const width = svg.getAttribute('width');
       const viewBox = (svg.getAttribute('viewBox') || '').trim().split(/[\s,]+/).map(Number);
       const img = document.createElement('img');
       img.className = 'svg-image';
       img.alt = 'SVG';
-      img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg.outerHTML);
+      img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svgMarkup(svg));
       if (!width || /%$/.test(width)) {
         // 没有固定宽度：按 viewBox 的自然尺寸显示（不超过容器宽度）
         img.style.width = viewBox.length === 4 && viewBox[2] > 0 ? `${Math.max(viewBox[2], 240)}px` : '100%';
@@ -387,10 +465,10 @@
     }
   }
 
-  function renderMarkdown(src, { pageLinks = true } = {}) {
+  function renderMarkdown(src, { pageLinks = true, streaming = false } = {}) {
     const store = [];
-    const protectedSrc = protectMath(String(src || '').replace(/\r\n?/g, '\n'), store);
-    const html = DOMPurify.sanitize(md.render(protectedSrc), PURIFY_CONFIG);
+    const protectedSrc = protectMath(fenceRawSvg(String(src || '').replace(/\r\n?/g, '\n')), store);
+    const html = DOMPurify.sanitize(md.render(protectedSrc, { streaming }), PURIFY_CONFIG);
     const tpl = document.createElement('template');
     tpl.innerHTML = html;
     const root = tpl.content;
@@ -423,6 +501,117 @@
     return mermaidLoader;
   }
 
+  /** 与界面一致的配色：浅色底上用陶土橙描边的浅色节点，深色模式对应一套暗色。 */
+  function mermaidConfig() {
+    const dark = prefersDark.matches;
+    return {
+      startOnLoad: false,
+      securityLevel: 'strict',
+      theme: 'base',
+      fontFamily: '-apple-system, "PingFang SC", sans-serif',
+      themeVariables: dark ? {
+        darkMode: true,
+        background: '#262624',
+        fontSize: '14px',
+        primaryColor: '#3a2d27',
+        primaryBorderColor: '#d97757',
+        primaryTextColor: '#f0eee7',
+        secondaryColor: '#283240',
+        tertiaryColor: '#30302e',
+        lineColor: '#9a978e',
+        textColor: '#f0eee7',
+        edgeLabelBackground: '#262624',
+        clusterBkg: '#2c2b29',
+        clusterBorder: '#4a4945',
+        noteBkgColor: '#3a3423',
+        noteBorderColor: '#c99a2e',
+        noteTextColor: '#f0eee7',
+      } : {
+        background: '#ffffff',
+        fontSize: '14px',
+        primaryColor: '#fbeae3',
+        primaryBorderColor: '#d97757',
+        primaryTextColor: '#1f1e1d',
+        secondaryColor: '#e6eef8',
+        tertiaryColor: '#f3f1ea',
+        lineColor: '#8f8c84',
+        textColor: '#1f1e1d',
+        edgeLabelBackground: '#faf9f5',
+        clusterBkg: '#f7f6f2',
+        clusterBorder: '#e3e0d7',
+        noteBkgColor: '#f8f0dc',
+        noteBorderColor: '#c99a2e',
+        noteTextColor: '#1f1e1d',
+      },
+    };
+  }
+
+  /**
+   * 修正模型最常写错的 Mermaid 语法，只在原文解析失败时使用：
+   * 流程图节点、连线文字里有括号等符号却没加引号；把时序图的 “A --> B: 文字” 写进流程图；
+   * 思维导图的普通文字里出现括号（会被当成节点形状）。
+   */
+  function repairMermaid(source) {
+    const lines = source.split('\n');
+    const head = (lines.find((l) => l.trim() && !l.trim().startsWith('%%')) || '').trim().toLowerCase();
+    if (/^(graph|flowchart)\b/.test(head)) {
+      return lines.map((line, i) => {
+        const trimmed = line.trim();
+        if (i === 0 || !trimmed || trimmed.startsWith('%%') || /^(classDef|class|style|linkStyle|click)\b/.test(trimmed)) return line;
+        let fixed = line.replace(/^(\s*)(\S+)\s*(-->|---|==>|-\.->)\s*([^:|\n]+?)\s*:\s*(.+)$/, '$1$2 $3|$5| $4');
+        fixed = fixed.replace(/(-->|---|==>|-\.->)\s*end\b/g, '$1 End').replace(/^(\s*)end(\s*(?:-->|---|==>|-\.->))/, '$1End$2');
+        return quoteFlowLabels(fixed);
+      }).join('\n');
+    }
+    if (/^mindmap\b/.test(head)) {
+      const shape = /^[\w-]*(\(\(.*\)\)|\(.*\)|\[.*\]|\{\{.*\}\}|\)\).*\(\(|\).*\()$/;
+      return lines.map((line, i) => {
+        const trimmed = line.trim();
+        if (i === 0 || !trimmed || trimmed.startsWith('::') || trimmed.startsWith('%%') || shape.test(trimmed)) return line;
+        return line.replace(/\(/g, '（').replace(/\)/g, '）');
+      }).join('\n');
+    }
+    return source;
+  }
+
+  function quoteFlowLabels(line) {
+    const quote = (s) => {
+      const text = s.trim();
+      return /^".*"$/.test(text) ? s : `"${text.replace(/"/g, '#quot;')}"`;
+    };
+    const pairs = { '[': ']', '(': ')', '{': '}' };
+    let out = '';
+    let i = 0;
+    while (i < line.length) {
+      const c = line[i];
+      if (c === '|') {
+        const end = line.indexOf('|', i + 1);
+        if (end > i + 1) {
+          out += '|' + quote(line.slice(i + 1, end)) + '|';
+          i = end + 1;
+          continue;
+        }
+      }
+      // 节点形状：紧跟在节点 ID 后面；[[、[(、((、{{、[/ 等特殊形状保持原样
+      if (pairs[c] && i > 0 && /[\p{L}\p{N}_]/u.test(line[i - 1]) && !/[[({/\\>"]/.test(line[i + 1] || '')) {
+        let depth = 0;
+        let j = i;
+        for (; j < line.length; j++) {
+          if (line[j] === c) depth++;
+          else if (line[j] === pairs[c] && --depth === 0) break;
+        }
+        if (j < line.length) {
+          out += c + quote(line.slice(i + 1, j)) + pairs[c];
+          i = j + 1;
+          continue;
+        }
+      }
+      out += c;
+      i++;
+    }
+    return out;
+  }
+
   function mermaidSource(block) {
     const code = block.querySelector('.figure-source code');
     return code ? code.textContent : '';
@@ -438,13 +627,21 @@
     }
   }
 
-  async function renderMermaidIn(root, streaming) {
+  // mermaid.render 不能并发：同时画几张图（比如重新打开带历史的对话）时，只有第一张能画出来，
+  // 其余都会报错。所有绘制排成一队，依次进行。
+  let mermaidQueue = Promise.resolve();
+
+  function renderMermaidIn(root, streaming) {
     const blocks = Array.from(root.querySelectorAll('.mermaid-block[data-state="pending"]'));
     if (!blocks.length) return;
     if (streaming) {
       for (const b of blocks) b.querySelector('.mermaid-canvas').innerHTML = `<span class="figure-hint">${t('回答完成后绘制图表…', 'Diagram renders when the answer finishes…')}</span>`;
       return;
     }
+    mermaidQueue = mermaidQueue.then(() => drawMermaid(blocks)).catch(() => {});
+  }
+
+  async function drawMermaid(blocks) {
     let mermaid;
     try {
       mermaid = await loadMermaid();
@@ -452,17 +649,23 @@
       for (const b of blocks) b.querySelector('.mermaid-canvas').innerHTML = `<span class="figure-hint error">${esc(e.message)}</span>`;
       return;
     }
-    mermaid.initialize({
-      startOnLoad: false,
-      securityLevel: 'strict',
-      theme: mermaidTheme(),
-      fontFamily: '-apple-system, "PingFang SC", sans-serif',
-    });
+    mermaid.initialize(mermaidConfig());
     for (const block of blocks) {
+      // 排队期间这条回答可能已经重新渲染过，旧节点不用再画
+      if (!block.isConnected || block.dataset.state !== 'pending') continue;
       const source = mermaidSource(block);
       const canvas = block.querySelector('.mermaid-canvas');
       try {
-        const { svg } = await mermaid.render(`mmd-${++mermaidSeq}`, source);
+        let svg;
+        try {
+          ({ svg } = await mermaid.render(`mmd-${++mermaidSeq}`, source));
+        } catch (e) {
+          // 常见的语法问题（节点文字里的括号等）自动修正后再试一次
+          const repaired = repairMermaid(source);
+          if (repaired === source) throw e;
+          document.querySelectorAll('body > [id^="dmmd-"], body > [id^="mmd-"]').forEach((n) => n.remove());
+          ({ svg } = await mermaid.render(`mmd-${++mermaidSeq}`, repaired));
+        }
         mermaidCache.set(mermaidTheme() + '\u0000' + source, svg);
         canvas.innerHTML = svg;
         block.dataset.state = 'done';
@@ -560,6 +763,24 @@
     details.querySelector('summary').addEventListener('click', () => { entry.userToggledReasoning = true; });
   }
 
+  /**
+   * 流式输出时整条回答会反复重建。把已经解码好的同一张 SVG 图片节点搬到新内容里，
+   * 前面画好的图就不会随每次刷新闪烁、高度跳动。
+   */
+  function reuseImages(oldRoot, frag) {
+    const old = new Map();
+    for (const img of oldRoot.querySelectorAll('img.svg-image')) {
+      if (!img.complete) continue;
+      if (!old.has(img.src)) old.set(img.src, []);
+      old.get(img.src).push(img);
+    }
+    if (!old.size) return;
+    for (const img of frag.querySelectorAll('img.svg-image')) {
+      const same = old.get(img.src);
+      if (same && same.length) img.replaceWith(same.shift());
+    }
+  }
+
   function renderAssistant(entry, m) {
     if (!entry.built) {
       buildAssistant(entry);
@@ -585,7 +806,8 @@
     // 正文
     const body = el.querySelector('.content');
     if (content !== prev.content || m.streaming !== prev.streaming) {
-      const frag = renderMarkdown(content);
+      const frag = renderMarkdown(content, { streaming: m.streaming });
+      reuseImages(body, frag);
       if (m.streaming) {
         if (!content.trim() && !reasoning.trim()) {
           const dots = document.createElement('div');
@@ -629,6 +851,10 @@
         `<button type="button" class="icon-btn" data-action="copy-message" title="${t('复制', 'Copy')}">${ICONS.copy}</button>` +
         `<button type="button" class="icon-btn regenerate" data-action="regenerate" title="${t('重新生成', 'Regenerate')}">${ICONS.retry}</button>` +
         (m.stopped ? `<span class="tag">${t('已停止', 'Stopped')}</span>` : '') +
+        (m.truncated && !m.stopped
+          ? `<span class="tag">${t('达到长度上限', 'Length limit reached')}</span>` +
+            `<button type="button" class="ghost-btn continue" data-action="continue">${t('继续生成', 'Continue')}</button>`
+          : '') +
         (usage ? `<span class="usage">${usage}</span>` : '');
     } else {
       foot.hidden = true;
@@ -930,6 +1156,9 @@
         break;
       case 'regenerate':
         post({ type: 'regenerate', id });
+        break;
+      case 'continue':
+        post({ type: 'continue', id });
         break;
       case 'quick':
         post({ type: 'quick', action: btn.dataset.quick });

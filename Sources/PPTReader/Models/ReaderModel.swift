@@ -68,9 +68,9 @@ final class ReaderModel {
         extraction?.cancel()
     }
 
-    /// 当前页截图（JPEG），供支持图像输入的模型使用。
-    func currentPageImage() -> Data? {
-        guard let page = document.page(at: currentPage - 1) else { return nil }
+    /// 某一页的截图（JPEG，页码从 1 开始），供支持图像输入的模型使用。
+    func pageImage(_ number: Int) -> Data? {
+        guard let page = document.page(at: number - 1) else { return nil }
         let bounds = page.bounds(for: .mediaBox)
         let scale = 1600 / max(bounds.width, bounds.height, 1)
         let image = page.thumbnail(of: CGSize(width: bounds.width * scale, height: bounds.height * scale), for: .mediaBox)

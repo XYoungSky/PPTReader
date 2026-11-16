@@ -7,7 +7,9 @@ enum SettingsWindow {
     static var model: AppModel?
     private static var window: NSWindow?
 
-    static func show() {
+    /// - Parameter section: 打开后切换到的分区；为空时停留在上次的分区。
+    static func show(_ section: SettingsSection? = nil) {
+        if let section { SettingsRouter.shared.section = section }
         guard let model else { return }
         if window == nil {
             let hosting = NSHostingController(rootView: SettingsView()
@@ -30,6 +32,14 @@ enum SettingsWindow {
         DispatchQueue.main.async { window?.makeFirstResponder(nil) }
         NSApp.activate()
     }
+}
+
+/// 设置窗口当前显示的分区，放在窗口之外，便于从 AI 面板等处直接跳到某个分区。
+@MainActor
+@Observable
+final class SettingsRouter {
+    static let shared = SettingsRouter()
+    var section: SettingsSection = .model
 }
 
 enum SettingsSection: String, CaseIterable, Identifiable {
@@ -61,7 +71,8 @@ enum SettingsSection: String, CaseIterable, Identifiable {
 }
 
 struct SettingsView: View {
-    @ViewState private var section: SettingsSection = .model
+    private var router: SettingsRouter { SettingsRouter.shared }
+    private var section: SettingsSection { router.section }
 
     var body: some View {
         HStack(spacing: 0) {
@@ -104,7 +115,7 @@ struct SettingsView: View {
             Color.clear.frame(height: 48)
             ForEach(SettingsSection.allCases) { item in
                 SectionButton(section: item, selected: section == item) {
-                    withAnimation(Motion.content) { section = item }
+                    withAnimation(Motion.content) { router.section = item }
                 }
             }
             Spacer()
@@ -320,7 +331,7 @@ private struct ProviderEditor: View {
                     }
                     .transition(.opacity)
                 }
-                SettingsRow(title: tr("模型", "Model"), divider: false) {
+                SettingsRow(title: tr("模型", "Model")) {
                     HStack(spacing: 6) {
                         ThemedField(text: $settings.model, placeholder: tr("输入或选择模型", "Enter or choose a model"), monospaced: true)
                         PopMenuButton(trailing: true, style: IconButtonStyle(size: 30)) {
@@ -334,6 +345,7 @@ private struct ProviderEditor: View {
                     }
                     .frame(width: 300)
                 }
+                ContextWindowRow()
             }
 
             SettingsCard(footer: isKimiCode ? tr(
@@ -395,14 +407,54 @@ private struct ProviderEditor: View {
         withAnimation(Motion.content) { testState = .testing }
         do {
             switch try await OpenAIClient.testConnection(config: settings.connection) {
-            case .models(let models):
-                settings.updateProvider(providerID) { $0.fetchedModels = models }
+            case .models(let models, let windows):
+                settings.updateProvider(providerID) {
+                    $0.fetchedModels = models
+                    $0.detectedContextWindows = windows
+                }
                 withAnimation(Motion.content) { testState = .success(models.count) }
             case .reachable:
                 withAnimation(Motion.content) { testState = .reachable }
             }
         } catch {
             withAnimation(Motion.content) { testState = .failure(error.localizedDescription) }
+        }
+    }
+}
+
+/// 当前模型的上下文窗口：默认采用接口报告的值，接口没有报告时按 128K 计算，也可以手动选择。
+private struct ContextWindowRow: View {
+    @Environment(AppSettings.self) private var settings
+
+    var body: some View {
+        let manual = settings.activeProvider.contextWindow
+        let detected = settings.detectedContextWindow
+        let detail: String = if manual != nil {
+            tr("手动设置", "Set manually") + (detected.map { tr("，接口报告 ", "; the API reports ") + TokenEstimate.label($0) } ?? "")
+        } else if let detected {
+            tr("接口报告 ", "Reported by the API: ") + TokenEstimate.label(detected)
+        } else {
+            tr("接口没有提供，按 \(TokenEstimate.label(AppSettings.defaultContextWindow)) 计算；可按服务商的模型说明修改",
+               "Not reported by the API, so \(TokenEstimate.label(AppSettings.defaultContextWindow)) is assumed. Check the provider's model docs to change it.")
+        }
+        SettingsRow(title: tr("上下文窗口", "Context window"), detail: detail, divider: false) {
+            PopMenuButton(trailing: true, style: OutlineButtonStyle()) {
+                var items = [PopMenuItem(tr("自动", "Automatic") + "（\(TokenEstimate.label(detected ?? AppSettings.defaultContextWindow))）",
+                                         checked: manual == nil) { settings.activeProvider.contextWindow = nil }]
+                items.append(.separator)
+                items += AppSettings.contextWindowPresets.map { value in
+                    PopMenuItem(TokenEstimate.label(value), checked: manual == value) { settings.activeProvider.contextWindow = value }
+                }
+                return items
+            } label: {
+                HStack(spacing: 5) {
+                    Text(TokenEstimate.label(settings.contextWindow) + (manual == nil ? tr("（自动）", " (auto)") : ""))
+                        .monospacedDigit()
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 8, weight: .bold))
+                }
+            }
+            .fixedSize()
         }
     }
 }
@@ -426,7 +478,9 @@ private struct ExplainSettings: View {
                 }
             }
 
-            SettingsCard(title: tr("上下文", "Context")) {
+            SettingsCard(title: tr("上下文", "Context"),
+                         footer: tr("课件或对话超出上限时，保留当前页附近的课件和最近的对话。模型的上下文窗口在「模型」中设置。",
+                                    "When the deck or chat exceeds a limit, the pages around the current one and the latest messages are kept. Set the model's context window under Model.")) {
                 SettingsRow(title: tr("附带当前页截图", "Attach page screenshot"),
                             detail: tr("让模型看到图片与公式", "Lets the model see figures and formulas")) {
                     Toggle("", isOn: $settings.sendPageImage)
@@ -440,8 +494,24 @@ private struct ExplainSettings: View {
                         (1_000_000, tr("100 万字", "1M")),
                     ])
                 }
-                SettingsRow(title: tr("携带历史消息", "Chat history"), divider: false) {
+                SettingsRow(title: tr("携带历史消息", "Chat history")) {
                     SegmentedPicker(selection: $settings.historyLimit, options: [(8, "8"), (16, "16"), (32, "32")])
+                }
+                SettingsRow(title: tr("上下文上限", "Context limit"),
+                            detail: tr("占模型上下文窗口的比例，其余留给回答 · 约 \(TokenEstimate.label(settings.contextTokenBudget)) / \(TokenEstimate.label(settings.contextWindow))",
+                                       "Share of the model's context window; the rest is left for the answer · about \(TokenEstimate.label(settings.contextTokenBudget)) of \(TokenEstimate.label(settings.contextWindow))"),
+                            divider: false) {
+                    HStack(spacing: 10) {
+                        Slider(value: $settings.contextBudgetPercent, in: 0.2...0.9, step: 0.05)
+                            .tint(Theme.accent)
+                            .controlSize(.small)
+                            .frame(width: 150)
+                            .accessibilityLabel(tr("上下文上限", "Context limit"))
+                        Text(StatsFormat.percent(settings.contextBudgetPercent))
+                            .font(.system(size: 12, weight: .medium).monospacedDigit())
+                            .foregroundStyle(Theme.text)
+                            .frame(width: 34, alignment: .trailing)
+                    }
                 }
             }
         }
@@ -455,23 +525,192 @@ private struct ExplanationStyleSettings: View {
 
     var body: some View {
         @Bindable var settings = settings
-        SettingsCard {
-            SettingsRow(title: tr("回答详略", "Answer detail")) {
-                SegmentedPicker(selection: $settings.explanationStyle.detail,
-                                options: ExplanationStyle.Detail.allCases.map { ($0, $0.title) })
-                    .accessibilityLabel(tr("回答详略", "Answer detail"))
+        let style = settings.explanationStyle
+        VStack(alignment: .leading, spacing: 22) {
+            SettingsCard(footer: tr("对之后的回答生效，已有的回答不变。在消息里直接提的要求（如“详细点”“画个图”“举个例子”）优先于这里的设置。",
+                                    "Applies to new answers; existing ones stay as they are. Anything you ask for in a message (more detail, a diagram, an example) takes precedence.")) {
+                SettingsRow(title: tr("篇幅", "Length"), detail: style.detail.summary) {
+                    SegmentedPicker(selection: $settings.explanationStyle.detail,
+                                    options: ExplanationStyle.Detail.allCases.map { ($0, $0.title) })
+                        .accessibilityLabel(tr("篇幅", "Length"))
+                }
+                SettingsRow(title: tr("图示", "Diagrams"), detail: style.diagrams.summary) {
+                    SegmentedPicker(selection: $settings.explanationStyle.diagrams,
+                                    options: ExplanationStyle.Diagrams.allCases.map { ($0, $0.title) })
+                        .accessibilityLabel(tr("图示", "Diagrams"))
+                }
+                SettingsRow(title: tr("例题", "Worked examples"), detail: style.examples.summary, divider: false) {
+                    SegmentedPicker(selection: $settings.explanationStyle.examples,
+                                    options: ExplanationStyle.Examples.allCases.map { ($0, $0.title) })
+                        .accessibilityLabel(tr("例题", "Worked examples"))
+                }
             }
-            SettingsRow(title: tr("图表使用", "Diagrams")) {
-                SegmentedPicker(selection: $settings.explanationStyle.diagrams,
-                                options: ExplanationStyle.Diagrams.allCases.map { ($0, $0.title) })
-                    .accessibilityLabel(tr("图表使用", "Diagrams"))
-            }
-            SettingsRow(title: tr("例题数量", "Examples"), divider: false) {
-                SegmentedPicker(selection: $settings.explanationStyle.examples,
-                                options: ExplanationStyle.Examples.allCases.map { ($0, $0.title) })
-                    .accessibilityLabel(tr("例题数量", "Examples"))
+            .animation(Motion.content, value: style)
+
+            CustomStyleCard(text: $settings.explanationStyle.custom)
+
+            HStack {
+                Spacer()
+                Button(tr("恢复默认", "Restore Defaults")) {
+                    withAnimation(Motion.content) { settings.explanationStyle = ExplanationStyle() }
+                }
+                .buttonStyle(OutlineButtonStyle())
+                .disabled(style == ExplanationStyle())
             }
         }
+    }
+}
+
+/// 自定义要求：自由填写，或点按下方的短语加入 / 移除。
+private struct CustomStyleCard: View {
+    @Binding var text: String
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        let limit = ExplanationStyle.customLimit
+        SettingsCard(title: tr("自定义要求", "Custom instructions"),
+                     footer: tr("随每次提问发给模型；和上面的选项冲突时，以这里写的为准。",
+                                "Sent with every question. Where it conflicts with the options above, this wins.")) {
+            VStack(alignment: .leading, spacing: 10) {
+                ZStack(alignment: .topLeading) {
+                    TextEditor(text: $text)
+                        .font(.system(size: 13))
+                        .foregroundStyle(Theme.text)
+                        .scrollContentBackground(.hidden)
+                        .scrollIndicators(.never)
+                        .focused($focused)
+                    if text.isEmpty {
+                        Text(tr("写下你希望模型怎么讲，例如：多结合工程里的实际应用；推导写完整；每讲完一部分提一个思考题。",
+                                "Describe how you'd like things explained, e.g. relate ideas to real engineering uses; write out full derivations; end each part with a question to think about."))
+                            .font(.system(size: 13))
+                            .foregroundStyle(Theme.text3)
+                            .padding(.leading, 5)
+                            .allowsHitTesting(false)
+                    }
+                }
+                .frame(height: 92)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 8)
+                .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Theme.panel))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .strokeBorder(focused ? Theme.accent.opacity(0.7) : Theme.border, lineWidth: 1)
+                )
+                .animation(Motion.hover, value: focused)
+
+                HStack(alignment: .top, spacing: 12) {
+                    FlowLayout(spacing: 6) {
+                        ForEach(ExplanationStyle.customSuggestions, id: \.title) { suggestion in
+                            SuggestionChip(title: suggestion.title, selected: text.contains(suggestion.text)) {
+                                withAnimation(Motion.snappy) { toggle(suggestion.text) }
+                            }
+                            .help(suggestion.text)
+                        }
+                    }
+                    Spacer(minLength: 0)
+                    Text("\(text.count) / \(limit)")
+                        .font(.system(size: 11).monospacedDigit())
+                        .foregroundStyle(text.count >= limit ? Theme.danger : Theme.text3)
+                        .padding(.top, 5)
+                }
+            }
+            .padding(14)
+        }
+        .onChange(of: text) { _, value in
+            if value.count > limit { text = String(value.prefix(limit)) }
+        }
+    }
+
+    /// 已有这句话就移除，否则另起一行加在末尾。
+    private func toggle(_ sentence: String) {
+        if text.contains(sentence) {
+            text = text.replacingOccurrences(of: sentence, with: "")
+                .split(separator: "\n")
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+                .filter { !$0.isEmpty }
+                .joined(separator: "\n")
+        } else {
+            let current = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            text = current.isEmpty ? sentence : current + "\n" + sentence
+        }
+    }
+}
+
+private struct SuggestionChip: View {
+    let title: String
+    let selected: Bool
+    let action: () -> Void
+    @ViewState private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 4) {
+                Image(systemName: selected ? "checkmark" : "plus")
+                    .font(.system(size: 9, weight: .bold))
+                Text(title)
+                    .font(.system(size: 12))
+            }
+            .foregroundStyle(selected ? Theme.accent : Theme.text2)
+            .padding(.horizontal, 9)
+            .frame(height: 24)
+            .background(
+                Capsule().fill(selected ? Theme.accent.opacity(0.1) : (hovering ? Theme.selected : Theme.hover))
+            )
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .animation(Motion.hover, value: hovering)
+        .accessibilityAddTraits(selected ? [.isSelected] : [])
+    }
+}
+
+/// 按行排列、放不下就换行的布局。
+private struct FlowLayout: Layout {
+    var spacing: CGFloat = 6
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let rows = arrange(width: proposal.width ?? .infinity, subviews: subviews)
+        let width = rows.map { $0.width }.max() ?? 0
+        let height = rows.reduce(0) { $0 + $1.height } + spacing * CGFloat(max(rows.count - 1, 0))
+        return CGSize(width: width, height: height)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        var y = bounds.minY
+        for row in arrange(width: bounds.width, subviews: subviews) {
+            var x = bounds.minX
+            for index in row.indices {
+                let size = subviews[index].sizeThatFits(.unspecified)
+                subviews[index].place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(size))
+                x += size.width + spacing
+            }
+            y += row.height + spacing
+        }
+    }
+
+    private struct Row {
+        var indices: [Int] = []
+        var width: CGFloat = 0
+        var height: CGFloat = 0
+    }
+
+    private func arrange(width: CGFloat, subviews: Subviews) -> [Row] {
+        var rows: [Row] = []
+        var row = Row()
+        for index in subviews.indices {
+            let size = subviews[index].sizeThatFits(.unspecified)
+            let needed = row.indices.isEmpty ? size.width : row.width + spacing + size.width
+            if needed > width, !row.indices.isEmpty {
+                rows.append(row)
+                row = Row()
+            }
+            row.width = row.indices.isEmpty ? size.width : row.width + spacing + size.width
+            row.height = max(row.height, size.height)
+            row.indices.append(index)
+        }
+        if !row.indices.isEmpty { rows.append(row) }
+        return rows
     }
 }
 

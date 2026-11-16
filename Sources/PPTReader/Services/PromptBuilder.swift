@@ -6,6 +6,8 @@ enum ChatIntent {
     case selection(SelectionAction, String)
     case question(String, selection: String?)
     case quick(QuickAction)
+    /// 上一条回答达到长度上限被截断，接着写。
+    case continuation
 }
 
 enum SelectionAction: String, CaseIterable {
@@ -43,8 +45,16 @@ enum PromptBuilder {
         var text: DocumentText?
         var charLimit: Int
         var historyLimit: Int
+        /// 整个请求最多使用的 token 数（模型上下文窗口 × 设置的比例）；为空时不限制。
+        var tokenBudget: Int?
         var pageImageJPEG: Data?
         var explanationStyle = ExplanationStyle()
+
+        /// 课件固定占预算的四分之三（扣掉写作说明），剩下的给历史和当前提问。
+        /// 这份预算只取决于设置，不随对话长短变化，系统提示因此保持稳定。
+        var coursewareTokenBudget: Int? {
+            tokenBudget.map { max(2_000, $0 * 3 / 4 - 3_000) }
+        }
     }
 
     // MARK: - 指令
@@ -77,6 +87,10 @@ enum PromptBuilder {
             return ChatMessage(role: .user, content: title, prompt: prompt, page: page, selection: text)
         case .question(let text, let selection):
             return ChatMessage(role: .user, content: text, page: page, selection: selection)
+        case .continuation:
+            return ChatMessage(role: .user, content: tr("继续", "Continue"), prompt: tr(
+                "上一条回答达到长度上限，在中途断开了。从断开的地方直接接着写，不要重复已经写过的内容，也不要加开场白。如果正好断在公式、表格、代码块或图（SVG / Mermaid）的中间，就把这一个公式、表格、代码块或图从头完整地重写一遍。",
+                "Your last answer hit the length limit and was cut off. Carry on from exactly where it stopped, without repeating anything or adding an introduction. If it stopped in the middle of a formula, table, code block or diagram (SVG / Mermaid), rewrite that one item in full from the start."), page: page)
         case .quick(let action):
             switch action {
             case .explainPage:
@@ -104,15 +118,79 @@ enum PromptBuilder {
     }
 
     // MARK: - 请求消息
+    //
+    // 服务商的前缀缓存要求前缀逐字相同（DeepSeek 只有完整匹配此前某次请求留下的前缀单元才算命中），
+    // 所以请求按"只追加、不改写"来组织：
+    // - 系统提示对同一份课件保持不变；随设置变化的讲解方式放在当轮提问里。
+    // - 每条提问发出时的完整文字保存在 `sentText`，之后原样放进历史，不再改写页码标签或换成简短标题。
+    //   截图只随当轮发送，它排在文字后面，去掉后前面的文字仍能命中。
+    // - 历史超过上限时整块丢掉较早的一段，而不是每轮滑动一条，让前缀能连续几轮保持不变。
 
     static func requestMessages(history: [ChatMessage], context: Context) -> [[String: Any]] {
-        var result: [[String: Any]] = [["role": "system", "content": systemPrompt(context)]]
+        let system = systemPrompt(context)
+        var result: [[String: Any]] = [["role": "system", "content": system]]
         guard let current = history.last, current.role == .user else { return result }
 
-        // 历史中跳过出错的轮次，只保留最近若干条
+        let text = current.sentText ?? composeText(current, context: context)
+        // 历史只能用系统提示和当前提问用剩的预算
+        let historyBudget = context.tokenBudget.map { budget in
+            max(0, budget - TokenEstimate.of(system) - TokenEstimate.of(text)
+                - (context.pageImageJPEG == nil ? 0 : TokenEstimate.image))
+        }
+
+        for message in historyWindow(Array(history.dropLast()), limit: context.historyLimit, tokenBudget: historyBudget) {
+            switch message.role {
+            case .user:
+                result.append(["role": "user", "content": message.sentText ?? legacyText(message)])
+            case .assistant:
+                result.append(["role": "assistant", "content": message.content])
+            }
+        }
+
+        if let image = context.pageImageJPEG {
+            result.append(["role": "user", "content": [
+                ["type": "text", "text": text],
+                ["type": "image_url", "image_url": ["url": "data:image/jpeg;base64," + image.base64EncodedString()]],
+            ]])
+        } else {
+            result.append(["role": "user", "content": text])
+        }
+        return result
+    }
+
+    /// 一条提问实际发给模型的文字：页码、选中内容、指令和讲解方式。发出时保存，之后原样用作历史。
+    static func composeText(_ message: ChatMessage, context: Context) -> String {
+        var parts: [String] = []
+        if let page = message.page {
+            parts.append(tr("【我正在看第 \(page) / \(context.pageCount) 页】", "[I'm on page \(page) of \(context.pageCount)]"))
+        }
+        if let selection = message.selection, !selection.isEmpty {
+            let page = message.page ?? context.currentPage
+            parts.append(tr("【我在第 \(page) 页选中的内容】", "[Selected on page \(page)]") + "\n\(selection)")
+        }
+        parts.append(message.instruction)
+        parts.append(context.explanationStyle.block)
+        return parts.joined(separator: "\n\n")
+    }
+
+    /// 1.6 之前保存的提问没有原文：按固定格式重建，保证每次请求得到相同的文字。
+    private static func legacyText(_ message: ChatMessage) -> String {
+        var parts: [String] = []
+        if let page = message.page {
+            parts.append(tr("【当时在看第 \(page) 页】", "[I was on page \(page)]"))
+        }
+        if let selection = message.selection, !selection.isEmpty, let page = message.page {
+            parts.append(tr("【我在第 \(page) 页选中的内容】", "[Selected on page \(page)]") + "\n\(selection)")
+        }
+        parts.append(message.content)
+        return parts.joined(separator: "\n\n")
+    }
+
+    /// 携带的历史：跳过出错的轮次；超过条数上限或 token 预算时，按"半个上限"为一块整块丢弃最早的轮次，
+    /// 起点只在丢弃时才移动，前缀能连续几轮保持不变。
+    static func historyWindow(_ past: [ChatMessage], limit: Int, tokenBudget: Int? = nil) -> [ChatMessage] {
         var turns: [ChatMessage] = []
         var index = 0
-        let past = Array(history.dropLast())
         while index < past.count {
             let message = past[index]
             if message.role == .user, index + 1 < past.count, past[index + 1].role == .assistant {
@@ -126,47 +204,39 @@ enum PromptBuilder {
                 index += 1
             }
         }
-        turns = Array(turns.suffix(max(0, context.historyLimit) / 2 * 2))
-
-        for message in turns {
-            switch message.role {
-            case .user:
-                result.append(["role": "user", "content": userText(message, context: context, isCurrent: false)])
-            case .assistant:
-                result.append(["role": "assistant", "content": message.content])
-            }
+        let limit = max(0, limit) / 2 * 2
+        guard limit > 0, !turns.isEmpty else { return [] }
+        let step = max(2, limit / 4 * 2)
+        var drop = turns.count > limit ? (turns.count - limit + step - 1) / step * step : 0
+        if let tokenBudget {
+            drop = max(drop, tokenDrop(turns, budget: tokenBudget))
         }
-
-        let text = userText(current, context: context, isCurrent: true)
-        if let image = context.pageImageJPEG {
-            result.append(["role": "user", "content": [
-                ["type": "text", "text": text],
-                ["type": "image_url", "image_url": ["url": "data:image/jpeg;base64," + image.base64EncodedString()]],
-            ]])
-        } else {
-            result.append(["role": "user", "content": text])
-        }
-        return result
+        return Array(turns.dropFirst(drop))
     }
 
-    private static func userText(_ message: ChatMessage, context: Context, isCurrent: Bool) -> String {
-        var parts: [String] = []
-        if let page = message.page {
-            parts.append(isCurrent
-                ? tr("【我正在看第 \(page) / \(context.pageCount) 页】", "[I'm on page \(page) of \(context.pageCount)]")
-                : tr("【当时在看第 \(page) 页】", "[I was on page \(page)]"))
+    /// 超出 token 预算时从哪里开始保留。按累计 token 把历史切成大约半个预算一块，
+    /// 块的边界只由更早的消息决定，追加新消息时不会移动；取能放进预算的最早一个边界。
+    /// 这样一次丢掉约半个预算的旧对话，之后能连续几轮保持同样的前缀。
+    private static func tokenDrop(_ turns: [ChatMessage], budget: Int) -> Int {
+        let costs = turns.map { message in
+            TokenEstimate.of(message.role == .user ? (message.sentText ?? legacyText(message)) : message.content) + 4
         }
-        if let selection = message.selection, !selection.isEmpty {
-            let page = message.page ?? context.currentPage
-            parts.append(tr("【我在第 \(page) 页选中的内容】", "[Selected on page \(page)]") + "\n\(selection)")
+        var suffix = Array(repeating: 0, count: costs.count + 1)
+        for index in costs.indices.reversed() { suffix[index] = suffix[index + 1] + costs[index] }
+        guard suffix[0] > budget else { return 0 }
+
+        let chunk = max(1, budget / 2)
+        var boundaries = [0]
+        var cumulative = 0
+        var mark = chunk
+        for index in stride(from: 0, to: costs.count, by: 2) {
+            if cumulative >= mark {
+                boundaries.append(index)
+                while mark <= cumulative { mark += chunk }
+            }
+            cumulative += costs[index] + (index + 1 < costs.count ? costs[index + 1] : 0)
         }
-        if isCurrent, context.pageImageJPEG != nil {
-            parts.append(tr("（附上了当前页的截图）", "(A screenshot of the current page is attached.)"))
-        }
-        // 历史轮次只带界面上显示的简短文字（如“讲解第 5 页”）：完整指令只对当轮有用，
-        // 在历史里反复出现会让模型把回答写得越来越像同一个模板，也白占 token。
-        parts.append(isCurrent ? message.instruction : message.content)
-        return parts.joined(separator: "\n\n")
+        return boundaries.first { suffix[$0] <= budget } ?? costs.count
     }
 
     // MARK: - 系统提示
@@ -178,8 +248,7 @@ enum PromptBuilder {
     // 写法说明：
     // - 提示本身用连贯的段落来写，不写成一条条规则。模型会模仿提示的文风，规则清单写多了，回答也会变成清单。
     // - 不给模型套"你是一位××老师"之类的角色，只交代任务、读者和写法。
-    // - 讲解方式放在课件文字之后：切换风格时课件这段长前缀不变，服务商的前缀缓存仍能命中；
-    //   放在末尾也离学生的问题更近，模型更容易照做。
+    // - 系统提示里不放任何随设置或翻页变化的内容（讲解方式附在每条提问末尾），整段对同一份课件逐字不变。
 
     private static func chineseSystemPrompt(_ context: Context) -> String {
         """
@@ -207,13 +276,23 @@ enum PromptBuilder {
 
         ## 界面能显示什么
 
-        Markdown、LaTeX 公式（行内 $...$，独立公式 $$...$$）、注明语言的代码块、表格，以及 ```svg 和 ```mermaid 代码块，后两种会直接画成图。SVG 要写完整的 <svg> 标签，并带上 viewBox。
+        Markdown、LaTeX 公式（行内 $...$，独立公式 $$...$$）、注明语言的代码块、表格，以及 ```svg 和 ```mermaid 代码块，后两种会直接画成图。比较几种情况、列出几组对应关系时，表格往往比段落清楚。
+
+        ## 怎么画图
+
+        图是讲解的一部分：画在它要说明的那段文字旁边，再用一两句话说明图里该看什么。流程、层次和概念之间的关系适合用 Mermaid；函数图像、几何关系、向量、电路、数据结构这类示意图用 SVG。
+
+        SVG 写成完整的 <svg> 放进 ```svg 代码块，带上 viewBox，宽度在 480 到 720 之间，四周留出 16 左右的边距。图总是显示在白色背景上，文字和线条用深色（#1f1e1d、#5e5c56）；需要区分的部分从橙 #d97757、蓝 #4a7bb7、绿 #5b9a68、黄 #c99a2e 里选，填充用对应的浅色 #fbeae3、#e6eef8、#e7f2e9、#f8f0dc。文字用 font-family="-apple-system, PingFang SC, sans-serif"，字号 13 到 16，不要压在线条或别的文字上；坐标轴、箭头和关键的点都标上名字，箭头用 <marker> 定义。SVG 里的文字不会渲染 LaTeX，简单的式子写成 x²、θ、Σ 这样的 Unicode，复杂的公式写在图外面。不要用 <foreignObject>、脚本、外部图片或字体。
+
+        Mermaid 的节点文字尽量短；文字里有括号、引号、冒号等符号时，用双引号把整段文字包起来，例如 A["f(x) 的导数"]。
+
+        ## 讲解方式
+
+        学生每条消息的末尾附有【讲解方式】：学生在设置里选的篇幅、图和例题，有时还有学生自己写的要求，以最新一条消息里的为准。照着写就行，但不要在回答里提到这些设置，比如不要说“按你的设置，这里不举例”。学生自己写的要求和前面几项冲突时，以学生自己写的为准；学生在消息正文里直接提的要求（“详细点”“举个例子”“画个图”“出几道题”等）优先于整个【讲解方式】。
 
         <courseware>
         \(coursewareText(context))
         </courseware>
-
-        \(context.explanationStyle.prompt)
         """
     }
 
@@ -243,13 +322,23 @@ enum PromptBuilder {
 
         ## What the interface can display
 
-        Markdown, LaTeX (inline $...$, display $$...$$), fenced code blocks with a language, tables, and ```svg and ```mermaid blocks, which are drawn as diagrams. An SVG must be a complete <svg> element with a viewBox.
+        Markdown, LaTeX (inline $...$, display $$...$$), fenced code blocks with a language, tables, and ```svg and ```mermaid blocks, which are drawn as diagrams. When comparing cases or listing correspondences, a table is often clearer than a paragraph.
+
+        ## Drawing diagrams
+
+        A diagram is part of the explanation: put it next to the text it illustrates and say in a sentence or two what to look at. Processes, hierarchies and relationships between ideas suit Mermaid; function graphs, geometry, vectors, circuits, data structures and other schematics suit SVG.
+
+        Write an SVG as a complete <svg> inside a ```svg block, with a viewBox, a width between 480 and 720 and about 16 of margin on every side. Diagrams are always shown on a white background, so use dark text and lines (#1f1e1d, #5e5c56). To tell parts apart, pick from orange #d97757, blue #4a7bb7, green #5b9a68 and yellow #c99a2e, with the matching light fills #fbeae3, #e6eef8, #e7f2e9 and #f8f0dc. Use font-family="-apple-system, Helvetica, sans-serif" at 13 to 16, and keep text off lines and other labels. Label axes, arrows and key points, and define arrowheads with <marker>. Text inside an SVG can't render LaTeX: write simple expressions in Unicode (x², θ, Σ) and put complex formulas outside the diagram. Don't use <foreignObject>, scripts, external images or fonts.
+
+        Keep Mermaid node text short, and wrap it in double quotes whenever it contains brackets, quotes or colons, e.g. A["derivative of f(x)"].
+
+        ## Explanation style
+
+        Each student message ends with an [Explanation style] block: the length, diagram and example settings the student chose, sometimes followed by their own requests. The block in the latest message is the one that counts. Follow it, but don't mention it in your answers (no "per your settings, I'll skip the example"). Where the student's own requests conflict with the other items, their own requests win; anything the student asks for in the body of a message, such as more detail, an example, a diagram or a quiz, takes precedence over the whole block.
 
         <courseware>
         \(coursewareText(context))
         </courseware>
-
-        \(context.explanationStyle.prompt)
         """
     }
 
@@ -258,21 +347,21 @@ enum PromptBuilder {
             return tr("（课件文字仍在提取中，暂时无法提供。）", "(The deck's text is still being extracted.)")
         }
         let pages = text.pages
+        // 每页的开销：字数受「课件文字上限」约束，token 数受上下文上限约束
+        let costs = pages.map { PageCost(chars: $0.count + 20, tokens: TokenEstimate.of($0) + 8) }
+        let budget = PageCost(chars: context.charLimit, tokens: context.coursewareTokenBudget ?? .max)
         var included = Set<Int>()
-        if text.totalCharacters <= context.charLimit {
+        if costs.reduce(0, { $0 + $1.chars }) <= budget.chars && costs.reduce(0, { $0 + $1.tokens }) <= budget.tokens {
             included = Set(pages.indices)
         } else {
-            // 课件过长：从当前页向两侧扩展，直到用完字符预算
-            var budget = context.charLimit
-            let center = min(max(context.currentPage - 1, 0), pages.count - 1)
-            var offset = 0
-            while budget > 0, offset < pages.count {
-                for index in Set([center - offset, center + offset]) where pages.indices.contains(index) {
-                    guard budget > 0 else { break }
-                    included.insert(index)
-                    budget -= pages[index].count + 20
-                }
-                offset += 1
+            // 课件过长：从中心页向两侧扩展，直到用完预算。中心按步长取整，
+            // 在附近翻页时摘取的范围（也就是系统提示）保持不变，前缀缓存不会因翻页失效。
+            let current = min(max(context.currentPage - 1, 0), pages.count - 1)
+            let step = max(5, pages.count / 10)
+            let snapped = min((current + step / 2) / step * step, pages.count - 1)
+            included = window(around: snapped, costs: costs, budget: budget)
+            if !included.contains(current) {
+                included = window(around: current, costs: costs, budget: budget)
             }
         }
 
@@ -296,5 +385,59 @@ enum PromptBuilder {
         }
         closeOmitted(before: pages.count)
         return lines.joined(separator: "\n")
+    }
+
+    private struct PageCost {
+        var chars: Int
+        var tokens: Int
+    }
+
+    /// 以 center 为中心向前后两侧依次加页，某一侧放不下下一页就停下；中心页总会放入。
+    private static func window(around center: Int, costs: [PageCost], budget: PageCost) -> Set<Int> {
+        var included: Set<Int> = [center]
+        var remaining = PageCost(chars: budget.chars - costs[center].chars, tokens: budget.tokens - costs[center].tokens)
+        func take(_ index: Int) -> Bool {
+            guard costs.indices.contains(index),
+                  costs[index].chars <= remaining.chars, costs[index].tokens <= remaining.tokens else { return false }
+            included.insert(index)
+            remaining.chars -= costs[index].chars
+            remaining.tokens -= costs[index].tokens
+            return true
+        }
+        var low = center - 1, high = center + 1
+        var lowOpen = true, highOpen = true
+        while lowOpen || highOpen {
+            if lowOpen { if take(low) { low -= 1 } else { lowOpen = false } }
+            if highOpen { if take(high) { high += 1 } else { highOpen = false } }
+        }
+        return included
+    }
+}
+
+/// 粗略估算 token 数（没有各家的分词器）：中日韩文字约 0.6 个 token，其余字符约 0.3 个；
+/// 一张页面截图按 2000 个计。只用于控制上下文不超出模型窗口，上限比例本身也留了余量。
+enum TokenEstimate {
+    static let image = 2_000
+
+    static func of(_ text: String) -> Int {
+        var wide = 0
+        var narrow = 0
+        for scalar in text.unicodeScalars {
+            switch scalar.value {
+            case 0x2E80...0x9FFF, 0xAC00...0xD7AF, 0xF900...0xFAFF, 0xFF00...0xFFEF, 0x20000...0x2FA1F: wide += 1
+            default: narrow += 1
+            }
+        }
+        return (wide * 6 + narrow * 3 + 9) / 10
+    }
+
+    /// 例如 128K、1M。
+    static func label(_ tokens: Int) -> String {
+        if tokens >= 1_000_000 {
+            let value = Double(tokens) / 1_000_000
+            return (value == value.rounded() ? String(Int(value)) : String(format: "%.1f", value)) + "M"
+        }
+        let k = tokens % 1024 == 0 ? tokens / 1024 : Int((Double(tokens) / 1000).rounded())
+        return "\(k)K"
     }
 }

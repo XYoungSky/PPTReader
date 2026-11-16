@@ -10,7 +10,9 @@ A lightweight macOS app for studying course slides with an AI tutor that has rea
 - **Context-aware** — every question includes the whole deck's text, the page you're on, your selection and a screenshot of the page.
 - **Ways to ask** — explain this page · explain / translate / give examples for a selection · free questions · auto-explain on page turn.
 - **Rich answers** — Markdown, LaTeX, code, tables, SVG, Mermaid and inline HTML. Click any diagram to open it in a zoomable preview (pinch / ⌘-scroll, drag to pan) and copy or save it as PNG.
-- **Statistics** — reading time, pages read, questions and token usage by day, deck and model (7 days / 30 days / all time), plus a GitHub-style heatmap of the past year. Earlier chats are counted automatically.
+- **Explanation style** — choose how long answers are and how many diagrams and worked examples they include, and add your own instructions (e.g. "write out full derivations"). Open it from the AI panel's More menu.
+- **Statistics** — reading time, pages read, questions and token usage by day, deck, course and model (7 days / 30 days / all time), plus a GitHub-style heatmap of the past year. Each deck shows the course folder it belongs to; earlier chats are counted automatically.
+- **Cache-friendly requests** — a fixed system prompt, append-only history and block-wise trimming keep the provider's prefix cache hitting across a conversation.
 - **Custom shortcuts** — rebind every menu command in Settings → Shortcuts.
 - **Any OpenAI-compatible API**, tuned for DeepSeek (`deepseek-flash` with vision, `deepseek-v4-pro`, thinking on/off), with support for the Kimi Code membership API (adjustable thinking effort).
 - **Multiple providers** — save up to 5 API configurations and switch between them in Settings or from the AI panel's model menu.
@@ -24,7 +26,7 @@ A lightweight macOS app for studying course slides with an AI tutor that has rea
 
 ## Build
 
-For a prebuilt app, download `PPTReader-v1.5-macOS-arm64.zip` from the [v1.5 release](https://github.com/XYoungSky/PPTReader/releases/tag/v1.5), unzip it, and move `PPTReader.app` to Applications. This build requires an Apple Silicon Mac and macOS 14 or later. It uses an ad-hoc signature and is not notarized by Apple; macOS may block the first launch.
+For a prebuilt app, download `PPTReader-v1.6-macOS-arm64.zip` from the [v1.6 release](https://github.com/XYoungSky/PPTReader/releases/tag/v1.6), unzip it, and move `PPTReader.app` to Applications. This build requires an Apple Silicon Mac and macOS 14 or later. It uses an ad-hoc signature and is not notarized by Apple; macOS may block the first launch.
 
 To build from source:
 
@@ -43,8 +45,11 @@ Open **Settings** (⌘,) → **Model**. Use **Add Provider** to create one from 
 | Base URL | e.g. `https://api.deepseek.com` |
 | API Key | your key (stored per provider in the Keychain) |
 | Model | Click **Test connection**, then choose a returned model, or enter a model ID supported by your provider |
+| Context window | taken from the API when it reports one, otherwise 128K is assumed; you can also pick it to match the provider's model docs |
 
 The model list combines the API results with your current selection. No model names are preset, and a model must be selected or entered before chatting. With several providers saved, you can also switch from the model menu at the top of the AI panel.
+
+**Settings → Tutor → Context limit** is a slider for the largest share of the model's context window a request may use (20%–90%, default 80%); the rest is left for the answer. When the deck or chat is too long, the pages around the current one and the latest messages are kept.
 
 | Template | Base URL | Notes |
 |---|---|---|

@@ -29,6 +29,10 @@ struct APIProvider: Codable, Identifiable, Equatable, Sendable {
     var hasKey: Bool
     /// 钥匙串中的条目名。从旧版本迁移来的配置沿用原来的 "api-key"。
     var keyAccount: String
+    /// 手动设置的上下文窗口（token）；为空时使用接口报告的值，接口没有报告时按默认值计算。
+    var contextWindow: Int?
+    /// 测试连接时接口报告的各模型上下文窗口（token）。
+    var detectedContextWindows: [String: Int]
 
     init(id: UUID = UUID(), name: String, baseURL: String, model: String = "", keyAccount: String? = nil) {
         self.id = id
@@ -40,6 +44,8 @@ struct APIProvider: Codable, Identifiable, Equatable, Sendable {
         reasoningEffort = .auto
         hasKey = false
         self.keyAccount = keyAccount ?? "api-key.\(id.uuidString)"
+        contextWindow = nil
+        detectedContextWindows = [:]
     }
 
     /// 逐个字段容错解码，以后增减字段时旧数据仍能读出。
@@ -54,6 +60,8 @@ struct APIProvider: Codable, Identifiable, Equatable, Sendable {
         reasoningEffort = (try? c.decodeIfPresent(ReasoningEffort.self, forKey: .reasoningEffort)) ?? .auto
         hasKey = try c.decodeIfPresent(Bool.self, forKey: .hasKey) ?? false
         keyAccount = try c.decodeIfPresent(String.self, forKey: .keyAccount) ?? "api-key.\(id.uuidString)"
+        contextWindow = try c.decodeIfPresent(Int.self, forKey: .contextWindow)
+        detectedContextWindows = (try? c.decodeIfPresent([String: Int].self, forKey: .detectedContextWindows)) ?? [:]
     }
 
     /// 列表中显示的副标题：主机名 · 模型。

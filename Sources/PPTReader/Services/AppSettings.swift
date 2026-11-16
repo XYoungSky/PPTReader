@@ -32,8 +32,10 @@ final class AppSettings {
         static let explanationDetail = "explain.style.detail"
         static let explanationDiagrams = "explain.style.diagrams"
         static let explanationExamples = "explain.style.examples"
+        static let explanationCustom = "explain.style.custom"
         static let contextLimit = "context.charLimit"
         static let historyLimit = "context.historyLimit"
+        static let budgetPercent = "context.budgetPercent"
         static let sendPageImage = "context.pageImage"
         static let noVisionModels = "context.noVisionModels"
         static let chatFontSize = "ui.chatFontSize"
@@ -52,12 +54,15 @@ final class AppSettings {
             defaults.set(explanationStyle.detail.rawValue, forKey: Key.explanationDetail)
             defaults.set(explanationStyle.diagrams.rawValue, forKey: Key.explanationDiagrams)
             defaults.set(explanationStyle.examples.rawValue, forKey: Key.explanationExamples)
+            defaults.set(explanationStyle.custom, forKey: Key.explanationCustom)
         }
     }
     /// 放进上下文的课件文字上限（字符数）。
     var contextCharLimit: Int { didSet { defaults.set(contextCharLimit, forKey: Key.contextLimit) } }
     /// 每次请求携带的历史消息条数。
     var historyLimit: Int { didSet { defaults.set(historyLimit, forKey: Key.historyLimit) } }
+    /// 一次请求最多占用模型上下文窗口的比例（0.2…0.9），其余留给回答。
+    var contextBudgetPercent: Double { didSet { defaults.set(contextBudgetPercent, forKey: Key.budgetPercent) } }
     /// 随提问附上当前页截图，让模型看到图片与公式。
     var sendPageImage: Bool { didSet { defaults.set(sendPageImage, forKey: Key.sendPageImage) } }
     /// 实际请求中拒绝了图片的模型，之后不再给它们发送截图。
@@ -90,10 +95,12 @@ final class AppSettings {
         explanationStyle = ExplanationStyle(
             detail: ExplanationStyle.Detail(rawValue: defaults.string(forKey: Key.explanationDetail) ?? "") ?? .normal,
             diagrams: ExplanationStyle.Diagrams(rawValue: defaults.string(forKey: Key.explanationDiagrams) ?? "") ?? .normal,
-            examples: ExplanationStyle.Examples(rawValue: defaults.string(forKey: Key.explanationExamples) ?? "") ?? .necessary
+            examples: ExplanationStyle.Examples(rawValue: defaults.string(forKey: Key.explanationExamples) ?? "") ?? .necessary,
+            custom: defaults.string(forKey: Key.explanationCustom) ?? ""
         )
         contextCharLimit = defaults.object(forKey: Key.contextLimit) as? Int ?? 400_000
         historyLimit = defaults.object(forKey: Key.historyLimit) as? Int ?? 16
+        contextBudgetPercent = min(max(defaults.object(forKey: Key.budgetPercent) as? Double ?? 0.8, 0.2), 0.9)
         sendPageImage = defaults.object(forKey: Key.sendPageImage) as? Bool ?? true
         noVisionModels = (defaults.stringArray(forKey: Key.noVisionModels) ?? []).filter { !$0.isEmpty }
         chatFontSize = defaults.object(forKey: Key.chatFontSize) as? Double ?? 15
@@ -228,6 +235,21 @@ final class AppSettings {
     func markNoVision(_ model: String) {
         if !model.isEmpty, !noVisionModels.contains(model) { noVisionModels.append(model) }
     }
+
+    // MARK: - 上下文预算
+
+    /// 接口没有报告、也没有手动设置时使用的上下文窗口。
+    static let defaultContextWindow = 128_000
+    static let contextWindowPresets = [32_000, 64_000, 128_000, 200_000, 256_000, 1_000_000]
+
+    /// 接口为当前模型报告的上下文窗口。
+    var detectedContextWindow: Int? { activeProvider.detectedContextWindows[effectiveModel] }
+
+    /// 当前服务商与模型的上下文窗口（token）：手动设置 > 接口报告 > 默认值。
+    var contextWindow: Int { activeProvider.contextWindow ?? detectedContextWindow ?? Self.defaultContextWindow }
+
+    /// 一次请求（课件 + 历史 + 当前提问）最多使用的 token 数。
+    var contextTokenBudget: Int { Int(Double(contextWindow) * contextBudgetPercent) }
 
     var connection: ConnectionConfig {
         let provider = activeProvider
