@@ -11,6 +11,18 @@ struct ConnectionConfig: Sendable {
     var thinking: Bool
     /// 思考强度（仅对 Kimi Code 类型发送 `reasoning_effort` 参数）。
     var reasoningEffort: ReasoningEffort = .auto
+    /// 缓存保留 1 小时（仅对支持的类型发送）。
+    var longCache = false
+
+    /// 服务商的缓存大约能保留多久；为空表示较长（DeepSeek 为数小时到数天）或不清楚，界面上不提示过期。
+    var cacheLifetime: TimeInterval? {
+        switch kind {
+        case .kimiPlatform: longCache ? 3_600 : 300
+        case .kimiCode: 300
+        case .deepSeek: nil
+        case .custom: OpenAIClient.isOpenAI(baseURL) ? 300 : nil
+        }
+    }
 }
 
 @MainActor
@@ -40,6 +52,9 @@ final class AppSettings {
         static let budgetPercent = "context.budgetPercent"
         static let sendPageImage = "context.pageImage"
         static let noVisionModels = "context.noVisionModels"
+        static let learnerProfile = "memory.profile"
+        static let courseNotes = "memory.courseNotes"
+        static let compactHistory = "context.compactHistory"
         static let chatFontSize = "ui.chatFontSize"
         static let chatSerif = "ui.chatSerif"
     }
@@ -69,6 +84,12 @@ final class AppSettings {
     var sendPageImage: Bool { didSet { defaults.set(sendPageImage, forKey: Key.sendPageImage) } }
     /// 实际请求中拒绝了图片的模型，之后不再给它们发送截图。
     var noVisionModels: [String] { didSet { defaults.set(noVisionModels, forKey: Key.noVisionModels) } }
+    /// 学习者档案：学生写的背景和目标，所有课件通用（相当于 Claude Code 的用户级 CLAUDE.md）。
+    var learnerProfile: String { didSet { defaults.set(learnerProfile, forKey: Key.learnerProfile) } }
+    /// 课程说明：课程文件夹路径 → 说明（相当于项目级的 CLAUDE.md / AGENTS.md）。课程文件夹本身保持只读，说明存在这里。
+    private(set) var courseNotes: [String: String] { didSet { defaults.set(courseNotes, forKey: Key.courseNotes) } }
+    /// 对话超出上限时，把要丢掉的较早对话整理成学习记录，而不是直接丢掉。
+    var compactHistory: Bool { didSet { defaults.set(compactHistory, forKey: Key.compactHistory) } }
     /// 讲解正文字号（pt）。
     var chatFontSize: Double { didSet { defaults.set(chatFontSize, forKey: Key.chatFontSize) } }
     /// 讲解正文使用衬线字体。
@@ -105,6 +126,9 @@ final class AppSettings {
         contextBudgetPercent = min(max(defaults.object(forKey: Key.budgetPercent) as? Double ?? 0.8, 0.2), 0.9)
         sendPageImage = defaults.object(forKey: Key.sendPageImage) as? Bool ?? true
         noVisionModels = (defaults.stringArray(forKey: Key.noVisionModels) ?? []).filter { !$0.isEmpty }
+        learnerProfile = defaults.string(forKey: Key.learnerProfile) ?? ""
+        courseNotes = defaults.dictionary(forKey: Key.courseNotes) as? [String: String] ?? [:]
+        compactHistory = defaults.object(forKey: Key.compactHistory) as? Bool ?? true
         chatFontSize = defaults.object(forKey: Key.chatFontSize) as? Double ?? 15
         chatSerif = defaults.bool(forKey: Key.chatSerif)
         let envKey = ProcessInfo.processInfo.environment["PPTREADER_API_KEY"]?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -261,7 +285,27 @@ final class AppSettings {
     var connection: ConnectionConfig {
         let provider = activeProvider
         return ConnectionConfig(providerID: provider.id, kind: provider.kind, baseURL: provider.baseURL, apiKey: apiKey,
-                                model: effectiveModel, thinking: provider.thinking, reasoningEffort: provider.reasoningEffort)
+                                model: effectiveModel, thinking: provider.thinking, reasoningEffort: provider.reasoningEffort,
+                                longCache: provider.longCache)
+    }
+
+    // MARK: - 学习档案
+
+    static let profileLimit = 1_000
+    static let courseNotesLimit = 4_000
+
+    func courseNotes(for course: URL) -> String {
+        courseNotes[course.standardizedFileURL.path] ?? ""
+    }
+
+    func setCourseNotes(_ text: String, for course: URL) {
+        let key = course.standardizedFileURL.path
+        let trimmed = String(text.prefix(Self.courseNotesLimit))
+        if trimmed.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            courseNotes[key] = nil
+        } else if courseNotes[key] != trimmed {
+            courseNotes[key] = trimmed
+        }
     }
 
     // MARK: - 自动检测到的模型限制

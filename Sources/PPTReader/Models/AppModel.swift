@@ -122,7 +122,10 @@ final class AppModel {
                     self?.tracker.pageViewed(page)
                 }
                 self.phase = .ready(reader)
-                self.chat.attach(reader: reader, thread: thread)
+                // 课程说明按课程文件夹保存：属于打开过的课程文件夹时用它，否则用课件所在的文件夹
+                let roots = [self.library.rootURL].compactMap { $0 } + self.library.recentFolders
+                let course = DeckLocation(path: thread.sourcePath, roots: roots).course
+                self.chat.attach(reader: reader, thread: thread, course: course)
                 self.tracker.open(deck: thread.sourcePath, page: reader.currentPage)
                 reader.startTextExtraction()
             } catch {

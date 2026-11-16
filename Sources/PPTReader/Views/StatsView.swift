@@ -135,6 +135,7 @@ struct StatsView: View {
         let tokens = summary.tokens
         let tokenCaption: String = if tokens.prompt > 0 && tokens.cacheHit > 0 {
             tr("缓存命中 ", "Cache hit ") + StatsFormat.percent(Double(tokens.cacheHit) / Double(tokens.prompt))
+                + (tokens.cacheWrite > 0 ? tr(" · 写入 ", " · wrote ") + StatsFormat.compact(tokens.cacheWrite) : "")
         } else if tokens.requests > 0 {
             tr("\(tokens.requests) 次请求", tokens.requests == 1 ? "1 request" : "\(tokens.requests) requests")
         } else {

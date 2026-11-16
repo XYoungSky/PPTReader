@@ -7,6 +7,7 @@ struct TokenTally: Codable, Equatable {
     var prompt = 0
     var completion = 0
     var cacheHit = 0
+    var cacheWrite = 0
 
     var total: Int { prompt + completion }
 
@@ -15,6 +16,7 @@ struct TokenTally: Codable, Equatable {
         lhs.prompt += rhs.prompt
         lhs.completion += rhs.completion
         lhs.cacheHit += rhs.cacheHit
+        lhs.cacheWrite += rhs.cacheWrite
     }
 
     init() {}
@@ -25,6 +27,7 @@ struct TokenTally: Codable, Equatable {
         prompt = try c.decodeIfPresent(Int.self, forKey: .prompt) ?? 0
         completion = try c.decodeIfPresent(Int.self, forKey: .completion) ?? 0
         cacheHit = try c.decodeIfPresent(Int.self, forKey: .cacheHit) ?? 0
+        cacheWrite = try c.decodeIfPresent(Int.self, forKey: .cacheWrite) ?? 0
     }
 }
 
@@ -111,6 +114,8 @@ struct StatsLog: Codable, Equatable {
 
 enum ReplyKind {
     case explain, question
+    /// 整理学习记录等后台请求：只计入 token 用量，不算提问次数。
+    case housekeeping
 }
 
 /// 学习统计：阅读时长、看过的页、提问次数与 Token 用量，保存在
@@ -165,6 +170,7 @@ final class StatsStore {
         switch kind {
         case .explain: entry.explains += 1
         case .question: entry.questions += 1
+        case .housekeeping: break
         }
         if let page { entry.insertPage(page) }
         entry.tokens += tally
@@ -197,6 +203,7 @@ final class StatsStore {
             tally.prompt = usage.prompt
             tally.completion = usage.completion
             tally.cacheHit = usage.cacheHit ?? 0
+            tally.cacheWrite = usage.cacheWrite ?? 0
         }
         return tally
     }

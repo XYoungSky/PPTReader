@@ -25,6 +25,7 @@ struct ChatPanel: View {
     private var header: some View {
         HStack(spacing: 2) {
             ModelMenu()
+            ContextMeter()
             Spacer(minLength: 8)
             Button {
                 settings.autoExplain.toggle()
@@ -64,6 +65,7 @@ struct ChatPanel: View {
             PopMenuItem(tr("清空对话…", "Clear Chat…"), icon: "trash", destructive: true, enabled: model.chat.hasMessages) { confirmClear() },
             PopMenuItem(tr("学习统计", "Statistics"), icon: "chart.bar.xaxis", shortcut: ShortcutStore.shared.label(for: .statistics)) { StatsWindow.show() },
             PopMenuItem(tr("讲解风格…", "Explanation Style…"), icon: "slider.horizontal.3") { SettingsWindow.show(.explanationStyle) },
+            PopMenuItem(tr("学习档案…", "Study Notes…"), icon: "person.text.rectangle") { SettingsWindow.show(.notes) },
             PopMenuItem(tr("设置…", "Settings…"), icon: "gearshape", shortcut: "⌘,") { SettingsWindow.show() },
         ]
         return items

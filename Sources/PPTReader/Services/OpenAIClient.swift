@@ -6,6 +6,8 @@ enum StreamEvent: Sendable {
     case usage(TokenUsage)
     /// 生成结束的原因，如 stop、length（达到长度上限）。
     case finish(String)
+    /// 还没有输出时连接失败，正在第 attempt 次（共 of 次）重试。
+    case retrying(attempt: Int, of: Int)
 }
 
 enum APIError: LocalizedError {
@@ -169,6 +171,8 @@ enum OpenAIClient {
         var maxTokens: Int?
         /// 这个模型不接受、不再发送的可选参数。
         var omit: Set<String> = []
+        /// 缓存路由键：同一份课件的请求带同一个键，服务商会尽量把它们发到同一份缓存（目前只对 OpenAI 发送）。
+        var cacheKey: String?
     }
 
     /// 组装请求体。返回实际发送了的可选参数名，出错时用来判断是哪个参数不被接受。
@@ -193,6 +197,15 @@ enum OpenAIClient {
         // Kimi Code 用 reasoning_effort（low / high / max）调整思考强度；不设置时使用模型默认值
         if config.kind.hasReasoningEffort, config.reasoningEffort != .auto {
             add("reasoning_effort", config.reasoningEffort.rawValue)
+        }
+        // Kimi 开放平台的缓存默认只保留 5 分钟，学生在一页上停留稍久，下一问就要全价重算整份课件；
+        // 改成 1 小时后首次写入贵一些，但之后一小时内的提问都能命中
+        if config.kind.hasCacheTTL, config.longCache {
+            add("prompt_cache_options", ["mode": "implicit", "ttl": "1h"])
+        }
+        // OpenAI 按 prompt_cache_key 把请求路由到同一份缓存（Codex 用会话 ID）
+        if let key = options.cacheKey, isOpenAI(config.baseURL) {
+            add("prompt_cache_key", key)
         }
         return (try JSONSerialization.data(withJSONObject: body), optional)
     }
@@ -235,6 +248,7 @@ enum OpenAIClient {
                                 throw (error as? HTTPFailure)?.error ?? error
                             }
                             attempt += 1
+                            continuation.yield(.retrying(attempt: attempt, of: maxRetries))
                             try await Task.sleep(for: .seconds(delay))
                         }
                     }
@@ -308,6 +322,10 @@ enum OpenAIClient {
         return nil
     }
 
+    static func isOpenAI(_ baseURL: String) -> Bool {
+        baseURL.lowercased().contains("api.openai.com")
+    }
+
     /// 只用于从地址推断接口类型；发请求时按保存的类型判断。
     static func isDeepSeek(_ baseURL: String) -> Bool {
         baseURL.lowercased().contains("deepseek.com")
@@ -337,10 +355,13 @@ enum OpenAIClient {
         let cached = (json["prompt_cache_hit_tokens"] as? Int)
             ?? ((json["prompt_tokens_details"] as? [String: Any])?["cached_tokens"] as? Int)
             ?? (json["cached_tokens"] as? Int)
+        // Kimi 单独报告写入缓存的 token（prompt_tokens_details.cache_write_tokens）
+        let written = (json["prompt_tokens_details"] as? [String: Any])?["cache_write_tokens"] as? Int
         return TokenUsage(
             prompt: json["prompt_tokens"] as? Int ?? 0,
             completion: json["completion_tokens"] as? Int ?? 0,
-            cacheHit: cached
+            cacheHit: cached,
+            cacheWrite: written
         )
     }
 

@@ -38,6 +38,8 @@ struct APIProvider: Codable, Identifiable, Equatable, Sendable {
     var kind: ProviderPreset
     /// 请求中自动检测到的各模型限制（最大输出、不接受的参数、token 估算校准）。
     var modelQuirks: [String: ModelQuirks]
+    /// 缓存保留 1 小时（只对 Kimi 开放平台生效，默认 5 分钟）。
+    var longCache: Bool
 
     init(id: UUID = UUID(), name: String, baseURL: String, model: String = "", kind: ProviderPreset? = nil, keyAccount: String? = nil) {
         self.id = id
@@ -45,6 +47,7 @@ struct APIProvider: Codable, Identifiable, Equatable, Sendable {
         self.baseURL = baseURL
         self.kind = kind ?? ProviderPreset.detect(baseURL)
         modelQuirks = [:]
+        longCache = true
         self.model = model
         fetchedModels = []
         thinking = true
@@ -72,6 +75,7 @@ struct APIProvider: Codable, Identifiable, Equatable, Sendable {
         // 1.6 之前没有保存类型，按地址推断一次
         kind = (try? c.decodeIfPresent(ProviderPreset.self, forKey: .kind)) ?? ProviderPreset.detect(baseURL)
         modelQuirks = (try? c.decodeIfPresent([String: ModelQuirks].self, forKey: .modelQuirks)) ?? [:]
+        longCache = (try? c.decodeIfPresent(Bool.self, forKey: .longCache)) ?? true
     }
 
     /// 列表中显示的副标题：主机名 · 模型。
@@ -104,6 +108,9 @@ enum ProviderPreset: String, Codable, CaseIterable, Identifiable, Sendable {
 
     /// 支持 Kimi Code 的 `reasoning_effort`。
     var hasReasoningEffort: Bool { self == .kimiCode }
+
+    /// 支持用 `prompt_cache_options` 设置缓存保留时长（Kimi 开放平台：5m / 1h）。
+    var hasCacheTTL: Bool { self == .kimiPlatform }
 
     var name: String {
         switch self {

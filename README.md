@@ -13,6 +13,8 @@ A lightweight macOS app for studying course slides with an AI tutor that has rea
 - **Explanation style** — choose how long answers are and how many diagrams and worked examples they include, and add your own instructions (e.g. "write out full derivations"). Open it from the AI panel's More menu.
 - **Statistics** — reading time, pages read, questions and token usage by day, deck, course and model (7 days / 30 days / all time), plus a GitHub-style heatmap of the past year. Each deck shows the course folder it belongs to; earlier chats are counted automatically.
 - **Cache-friendly requests** — a fixed system prompt (deck-independent instructions first, the deck last), append-only history and block-wise trimming with stable boundaries keep the provider's prefix cache hitting across a conversation, while text is still being OCR'd and when you page through a long deck.
+- **Study notes and study record** — write *About me* (applies to every deck) and *Course notes* (per course folder) under Settings → Study notes; both go into the system prompt. When a chat outgrows the context limit, the earlier messages are condensed into a study record instead of being dropped, so the tutor still knows what was covered, where you got stuck and which examples it used. The course folder itself is never modified.
+- **Context meter** — the ring at the top of the AI panel shows how much of the context window the last request used. Click it for a breakdown (instructions, notes, deck, study record, history, question, screenshot), the cache hit rate and cache writes, and a warning when the provider's cache has probably expired.
 - **Custom shortcuts** — rebind every menu command in Settings → Shortcuts.
 - **Any OpenAI-compatible API**, tuned for DeepSeek (`deepseek-flash` with vision, `deepseek-v4-pro`, thinking on/off), with support for the Kimi Code membership API (adjustable thinking effort).
 - **Multiple providers** — save up to 5 API configurations and switch between them in Settings or from the AI panel's model menu.
@@ -49,6 +51,8 @@ Open **Settings** (⌘,) → **Model**. Use **Add Provider** to create one from 
 | Context window | taken from the API when it reports one, otherwise 128K is assumed; you can also pick it to match the provider's model docs |
 
 The model list combines the API results with your current selection. No model names are preset, and a model must be selected or entered before chatting. With several providers saved, you can also switch from the model menu at the top of the AI panel.
+
+For the Kimi Platform, **Keep cache for 1 hour** (on by default) asks Kimi to keep the prompt cache for an hour instead of five minutes; the first write costs more, but questions within the hour hit the cache.
 
 **Settings → Tutor → Context limit** is a slider for the largest share of the model's context window a request may use (20%–90%, default 80%); the rest is left for the answer. When the deck or chat is too long, the pages around the current one and the latest messages are kept.
 

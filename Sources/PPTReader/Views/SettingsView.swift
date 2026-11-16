@@ -43,7 +43,7 @@ final class SettingsRouter {
 }
 
 enum SettingsSection: String, CaseIterable, Identifiable {
-    case model, explain, explanationStyle, appearance, shortcuts, data
+    case model, explain, explanationStyle, notes, appearance, shortcuts, data
 
     var id: String { rawValue }
 
@@ -52,6 +52,7 @@ enum SettingsSection: String, CaseIterable, Identifiable {
         case .model: tr("模型", "Model")
         case .explain: tr("讲解", "Tutor")
         case .explanationStyle: tr("讲解风格", "Explanation style")
+        case .notes: tr("学习档案", "Study notes")
         case .appearance: tr("外观", "Appearance")
         case .shortcuts: tr("快捷键", "Shortcuts")
         case .data: tr("数据", "Data")
@@ -63,6 +64,7 @@ enum SettingsSection: String, CaseIterable, Identifiable {
         case .model: "cpu"
         case .explain: "sparkles"
         case .explanationStyle: "slider.horizontal.3"
+        case .notes: "person.text.rectangle"
         case .appearance: "paintbrush"
         case .shortcuts: "keyboard"
         case .data: "externaldrive"
@@ -88,6 +90,7 @@ struct SettingsView: View {
                         case .model: ModelSettings()
                         case .explain: ExplainSettings()
                         case .explanationStyle: ExplanationStyleSettings()
+                        case .notes: NotesSettings()
                         case .appearance: AppearanceSettings()
                         case .shortcuts: ShortcutSettings()
                         case .data: DataSettings()
@@ -362,6 +365,15 @@ private struct ProviderEditor: View {
                             .labelsHidden()
                     }
                 }
+                if settings.activeProvider.kind.hasCacheTTL {
+                    SettingsRow(title: tr("缓存保留 1 小时", "Keep cache for 1 hour"),
+                                detail: tr("默认只保留 5 分钟；改为 1 小时后首次写入按 2 倍计费，之后一小时内的提问都按缓存价计算",
+                                           "The default is 5 minutes. With 1 hour the first write costs twice as much, but questions within the hour are billed at the cache rate")) {
+                        Toggle("", isOn: $settings.activeProvider.longCache)
+                            .toggleStyle(AccentToggleStyle())
+                            .labelsHidden()
+                    }
+                }
                 if settings.activeProvider.kind.hasReasoningEffort {
                     SettingsRow(title: tr("思考强度", "Thinking effort"), detail: tr("越高越准确，但更慢、更耗额度", "Higher is more accurate but slower and uses more quota")) {
                         SegmentedPicker(selection: $settings.activeProvider.reasoningEffort,
@@ -534,6 +546,13 @@ private struct ExplainSettings: View {
                 SettingsRow(title: tr("携带历史消息", "Chat history")) {
                     SegmentedPicker(selection: $settings.historyLimit, options: [(8, "8"), (16, "16"), (32, "32")])
                 }
+                SettingsRow(title: tr("整理较早的对话", "Condense earlier messages"),
+                            detail: tr("超出上限时先整理成学习记录再丢弃，模型记得讲过什么；每次整理多一次请求",
+                                       "Before old messages are dropped, they're condensed into a study record so the tutor remembers them; costs one extra request each time")) {
+                    Toggle("", isOn: $settings.compactHistory)
+                        .toggleStyle(AccentToggleStyle())
+                        .labelsHidden()
+                }
                 SettingsRow(title: tr("上下文上限", "Context limit"),
                             detail: tr("占模型上下文窗口的比例，其余留给回答 · 约 \(TokenEstimate.label(settings.contextTokenBudget)) / \(TokenEstimate.label(settings.contextWindow))",
                                        "Share of the model's context window; the rest is left for the answer · about \(TokenEstimate.label(settings.contextTokenBudget)) of \(TokenEstimate.label(settings.contextWindow))"),
@@ -551,6 +570,117 @@ private struct ExplainSettings: View {
                     }
                 }
             }
+        }
+    }
+}
+
+// MARK: - 学习档案
+
+/// 分层的学习档案（参考 Claude Code 的 CLAUDE.md 与 Codex 的 AGENTS.md）：
+/// 关于我（所有课件通用）→ 课程说明（按课程文件夹）→ 学习记录（每份课件自动整理）。
+private struct NotesSettings: View {
+    @Environment(AppModel.self) private var model
+    @Environment(AppSettings.self) private var settings
+
+    var body: some View {
+        @Bindable var settings = settings
+        let chat = model.chat
+        VStack(alignment: .leading, spacing: 22) {
+            SettingsCard(title: tr("关于我", "About me"),
+                         footer: tr("所有课件通用，例如专业、年级、已经学过的课、学习目标。放在系统提示里，修改后的下一次提问生效。",
+                                    "Applies to every deck: your major, year, courses you've taken, what you're aiming for. It goes into the system prompt and takes effect from your next question.")) {
+                NoteEditor(text: $settings.learnerProfile, limit: AppSettings.profileLimit, height: 72,
+                           placeholder: tr("例如：电子信息专业大二，线性代数学过但不熟，目标是期末 85 分以上。",
+                                           "e.g. Second-year electrical engineering; I've taken linear algebra but I'm rusty; aiming for a high grade in the final."))
+            }
+
+            if let course = chat.course {
+                SettingsCard(title: tr("课程说明 · ", "Course notes · ") + course.lastPathComponent,
+                             footer: tr("这门课的所有课件共用，例如老师强调的重点、记号约定、考试范围。保存在 PPTReader 的数据中，课程文件夹本身不会被修改。",
+                                        "Shared by every deck in this course, such as what the lecturer stresses, notation and exam scope. Stored in PPTReader's data; the course folder itself is never changed.")) {
+                    NoteEditor(text: Binding(get: { settings.courseNotes(for: course) },
+                                             set: { settings.setCourseNotes($0, for: course) }),
+                               limit: AppSettings.courseNotesLimit, height: 120,
+                               placeholder: tr("例如：老师说第 4 章只考计算不考证明；本课程向量一律用粗体表示；期中范围是第 1–5 章。",
+                                               "e.g. Chapter 4 is tested on calculations only, not proofs; vectors are written in bold; the midterm covers chapters 1–5."))
+                }
+            } else {
+                SettingsCard(title: tr("课程说明", "Course notes"),
+                             footer: tr("打开一份课件后，可以为它所在的课程写说明。", "Open a deck to write notes for its course.")) {
+                    EmptyView()
+                }
+            }
+
+            if let record = chat.record {
+                SettingsCard(title: tr("学习记录 · 当前课件", "Study record · this deck"),
+                             footer: tr("对话超出上限时自动整理，代替被丢弃的较早对话。清除后，那些对话会在下次超出上限时重新整理。",
+                                        "Written automatically when the chat exceeds the limit, in place of the earlier messages that are dropped. If cleared, they're condensed again the next time the limit is reached.")) {
+                    VStack(alignment: .leading, spacing: 10) {
+                        ScrollView {
+                            Text(record.text)
+                                .font(.system(size: 12.5))
+                                .foregroundStyle(Theme.text2)
+                                .textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .frame(maxHeight: 160)
+                        HStack {
+                            Text(tr("已整理 \(record.messageCount) 条消息", "\(record.messageCount) messages condensed"))
+                                .font(.system(size: 11.5))
+                                .foregroundStyle(Theme.text3)
+                            Spacer()
+                            Button(tr("清除记录", "Clear Record")) { chat.clearRecord() }
+                                .buttonStyle(OutlineButtonStyle())
+                        }
+                    }
+                    .padding(14)
+                }
+            }
+        }
+    }
+}
+
+/// 多行文字输入框，带字数上限和占位文字。
+private struct NoteEditor: View {
+    @Binding var text: String
+    let limit: Int
+    let height: CGFloat
+    let placeholder: String
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        VStack(alignment: .trailing, spacing: 6) {
+            ZStack(alignment: .topLeading) {
+                TextEditor(text: $text)
+                    .font(.system(size: 13))
+                    .foregroundStyle(Theme.text)
+                    .scrollContentBackground(.hidden)
+                    .scrollIndicators(.never)
+                    .focused($focused)
+                if text.isEmpty {
+                    Text(placeholder)
+                        .font(.system(size: 13))
+                        .foregroundStyle(Theme.text3)
+                        .padding(.leading, 5)
+                        .allowsHitTesting(false)
+                }
+            }
+            .frame(height: height)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 8)
+            .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Theme.panel))
+            .overlay(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .strokeBorder(focused ? Theme.accent.opacity(0.7) : Theme.border, lineWidth: 1)
+            )
+            .animation(Motion.hover, value: focused)
+            Text("\(text.count) / \(limit)")
+                .font(.system(size: 11).monospacedDigit())
+                .foregroundStyle(text.count >= limit ? Theme.danger : Theme.text3)
+        }
+        .padding(14)
+        .onChange(of: text) { _, value in
+            if value.count > limit { text = String(value.prefix(limit)) }
         }
     }
 }

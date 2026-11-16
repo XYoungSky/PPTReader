@@ -52,11 +52,19 @@ enum PromptBuilder {
         var tokenBudget: Int?
         var pageImageJPEG: Data?
         var explanationStyle = ExplanationStyle()
+        /// 学习者档案（所有课件通用）。
+        var profile = ""
+        /// 这门课的课程说明。
+        var courseNotes = ""
+        /// 较早对话整理成的学习记录。
+        var record: String?
+        /// 给学习记录预留的 token 数（开启整理时为固定值），让历史预算在生成记录前后保持不变。
+        var recordAllowance = 0
 
-        /// 课件固定占预算的四分之三（扣掉写作说明），剩下的给历史和当前提问。
-        /// 这份预算只取决于设置，不随对话长短变化，系统提示因此保持稳定。
+        /// 课件固定占预算的四分之三（扣掉写作说明和学习档案），剩下的给历史和当前提问。
+        /// 这份预算只取决于设置和档案，不随对话长短变化，系统提示因此保持稳定。
         var coursewareTokenBudget: Int? {
-            tokenBudget.map { max(2_000, $0 * 3 / 4 - 3_000) }
+            tokenBudget.map { max(2_000, $0 * 3 / 4 - 3_000 - TokenEstimate.of(profile) - TokenEstimate.of(courseNotes)) }
         }
 
         /// 历史切块的大小依据：只取决于设置，不随当轮提问的长短、有没有截图变化，切块边界因此不会每轮移动。
@@ -69,7 +77,26 @@ enum PromptBuilder {
     struct Request {
         var messages: [[String: Any]]
         var estimatedTokens: Int
+        var breakdown = Breakdown()
     }
+
+    /// 一次请求的 token 组成（估算），用于面板上的上下文用量显示（参考 Claude Code 的 /context）。
+    struct Breakdown: Equatable {
+        var instructions = 0
+        var memory = 0
+        var courseware = 0
+        var record = 0
+        var history = 0
+        var question = 0
+        var image = 0
+
+        var total: Int { instructions + memory + courseware + record + history + question + image }
+    }
+
+    /// 学习记录最长保留的字数，超出时截断（提示里要求不超过 600 字，这里留足余量）。
+    static let recordCharLimit = 3_000
+    /// 开启整理时给学习记录预留的 token 数。
+    static let recordAllowance = 2_500
 
     // MARK: - 指令
 
@@ -150,21 +177,19 @@ enum PromptBuilder {
         guard let current = history.last, current.role == .user else { return Request(messages: result, estimatedTokens: estimate) }
 
         let text = current.sentText ?? composeText(current, context: context)
-        // 历史只能用系统提示和当前提问用剩的预算。当轮提问按固定的额度预留（只有特别长时才按实际），
-        // 这样历史预算不随提问长短、有没有截图来回变化，保留的起点只会往前推、不会退回去
         let currentCost = TokenEstimate.of(text) + (context.pageImageJPEG == nil ? 0 : TokenEstimate.image)
-        let historyBudget = context.tokenBudget.map { budget in
-            max(0, budget - TokenEstimate.of(system) - max(currentCost, Self.questionAllowance))
-        }
-
         let window = historyWindow(Array(history.dropLast()), limit: context.historyLimit,
-                                   tokenBudget: historyBudget, chunkBudget: context.historyChunkBudget)
+                                   tokenBudget: historyBudget(context, system: system, currentCost: currentCost),
+                                   chunkBudget: context.historyChunkBudget)
+        var breakdown = systemBreakdown(context, system: system)
         for message in window {
             let content = message.role == .user ? (message.sentText ?? legacyText(message)) : message.content
             result.append(["role": message.role.rawValue, "content": content])
-            estimate += TokenEstimate.of(content) + 4
+            breakdown.history += TokenEstimate.of(content) + 4
         }
-        estimate += TokenEstimate.of(text) + 4
+        breakdown.question = TokenEstimate.of(text) + 4
+        breakdown.image = context.pageImageJPEG == nil ? 0 : TokenEstimate.image
+        estimate += breakdown.history + breakdown.question
 
         if let image = context.pageImageJPEG {
             result.append(["role": "user", "content": [
@@ -174,7 +199,110 @@ enum PromptBuilder {
         } else {
             result.append(["role": "user", "content": text])
         }
+        return Request(messages: result, estimatedTokens: estimate, breakdown: breakdown)
+    }
+
+    /// 历史能用的预算：扣掉系统提示和当轮提问。当轮提问按固定的额度预留（只有特别长时才按实际），
+    /// 学习记录也按固定额度预留，这样历史预算不随提问长短、有没有截图、记录长短来回变化，
+    /// 保留的起点只会往前推、不会退回去，生成记录前算出的丢弃位置和生成后一致。
+    private static func historyBudget(_ context: Context, system: String, currentCost: Int) -> Int? {
+        context.tokenBudget.map { budget in
+            let record = TokenEstimate.of(recordSection(context))
+            let fixed = TokenEstimate.of(system) - record + max(record, context.recordAllowance)
+            return max(0, budget - fixed - max(currentCost, Self.questionAllowance))
+        }
+    }
+
+    private static func systemBreakdown(_ context: Context, system: String) -> Breakdown {
+        var breakdown = Breakdown()
+        breakdown.memory = TokenEstimate.of(memorySections(context))
+        breakdown.courseware = TokenEstimate.of(coursewareText(context))
+        breakdown.record = TokenEstimate.of(recordSection(context))
+        breakdown.instructions = max(0, TokenEstimate.of(system) + 4 - breakdown.memory - breakdown.courseware - breakdown.record)
+        return breakdown
+    }
+
+    // MARK: - 学习记录（压缩较早的对话）
+    //
+    // 参考 Codex 与 Claude Code 的上下文压缩：对话快超出预算时，不直接丢掉最早的一段，
+    // 而是先让模型把它整理成一份学习记录，放在系统提示末尾，之后的请求带着记录继续。
+    // 整理请求 = 系统提示 + 这些历史 + 一句整理指令，前缀和上一次请求相同，能命中缓存。
+
+    /// 按下一次请求的预算，已有历史中将被丢掉的部分里最后一条有效消息；没有要丢的返回 nil。
+    static func lastDroppedMessage(past: [ChatMessage], context: Context) -> ChatMessage? {
+        let system = systemPrompt(context)
+        let turns = validTurns(past)
+        let kept = historyWindow(past, limit: context.historyLimit,
+                                 tokenBudget: historyBudget(context, system: system, currentCost: 0),
+                                 chunkBudget: context.historyChunkBudget)
+        let dropped = turns.count - kept.count
+        return dropped > 0 ? turns[dropped - 1] : nil
+    }
+
+    /// 整理学习记录的请求：和平常一样的系统提示（含旧记录）与历史，末尾追加整理指令。
+    static func recordRequest(past: [ChatMessage], context: Context) -> Request {
+        let system = systemPrompt(context)
+        var result: [[String: Any]] = [["role": "system", "content": system]]
+        var estimate = TokenEstimate.of(system) + 4
+        for message in validTurns(past) {
+            let content = message.role == .user ? (message.sentText ?? legacyText(message)) : message.content
+            result.append(["role": message.role.rawValue, "content": content])
+            estimate += TokenEstimate.of(content) + 4
+        }
+        let instruction = recordInstruction(hasRecord: context.record != nil)
+        result.append(["role": "user", "content": instruction])
+        estimate += TokenEstimate.of(instruction) + 4
         return Request(messages: result, estimatedTokens: estimate)
+    }
+
+    /// 整理指令（参考 Codex 的交接摘要：进展、关键约定、偏好、待办），按辅导场景改写。
+    private static func recordInstruction(hasRecord: Bool) -> String {
+        let merge = hasRecord
+            ? tr("系统提示末尾已有一份较早的学习记录，把它和之后的对话合并成一份新的，其中仍然有用的内容不要丢。\n",
+                 "There is an earlier study record at the end of the system prompt. Merge it with the conversation since into one new record, keeping whatever in it is still useful.\n")
+            : ""
+        return tr("""
+            【整理学习记录】这一条不是学生的提问。请把到目前为止的辅导过程整理成一份学习记录。它会替代上面较早的对话，交给之后接着辅导这位学生的人使用，所以只写之后讲解真正用得上的内容：
+            - 已经讲过哪些页和概念，各讲到什么程度（注明页码）；
+            - 讲解中用过的例子、类比和约定的记号，之后要保持一致；
+            - 学生问过什么，在哪里卡住或理解错了，练习题答得怎样；
+            - 学生明确提出的要求和偏好；
+            - 还没讲完、或答应之后再讲的内容。
+            \(merge)用简洁的分条列表，总共不超过 600 字。直接输出记录本身，不要开场白和结尾，也不用遵循上面的讲解方式。
+            """, """
+            [Study record] This is not a question from the student. Write up the tutoring so far as a study record. It will replace the earlier conversation above and be handed to whoever continues tutoring this student, so include only what later explanations will actually need:
+            - which pages and ideas have been covered, and how far (with page numbers);
+            - examples, analogies and notation used, which should stay consistent;
+            - what the student asked, where they got stuck or confused, and how they did on practice questions;
+            - requests and preferences the student stated;
+            - anything left unfinished or promised for later.
+            \(merge)Use a concise bulleted list of at most 400 words. Output only the record, with no introduction or closing, and ignore the explanation style above.
+            """)
+    }
+
+    /// 系统提示末尾的学习记录。
+    private static func recordSection(_ context: Context) -> String {
+        guard let record = context.record?.trimmingCharacters(in: .whitespacesAndNewlines), !record.isEmpty else { return "" }
+        let intro = tr("前面较早的对话已整理成下面这份学习记录，之后的对话接着它继续。讲解时和记录里的进度、例子、记号保持一致，不用向学生提起这份记录。",
+                       "The earlier part of the conversation has been condensed into the study record below, and the conversation continues from it. Stay consistent with its progress, examples and notation, and don't mention the record to the student.")
+        return "\n\n<study_record>\n\(intro)\n\n\(String(record.prefix(recordCharLimit)))\n</study_record>"
+    }
+
+    /// 学习者档案和课程说明，放在写作说明之后、课件之前：从通用到具体（参考 CLAUDE.md / AGENTS.md 的分层），
+    /// 同一门课的不同课件共用这一段前缀。
+    private static func memorySections(_ context: Context) -> String {
+        var parts: [String] = []
+        let profile = context.profile.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !profile.isEmpty {
+            parts.append(tr("## 关于学生\n\n学生自己写的背景和目标，据此把握讲解的深浅和侧重：\n\n",
+                            "## About the student\n\nThe student's own background and goals; use them to pitch the depth and focus of explanations:\n\n") + profile)
+        }
+        let notes = context.courseNotes.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !notes.isEmpty {
+            parts.append(tr("## 课程说明\n\n学生为这门课记下的说明（例如老师强调的重点、记号约定、考试范围），讲这门课的所有课件时都适用：\n\n",
+                            "## Course notes\n\nNotes the student keeps for this course (such as what the lecturer stresses, notation, exam scope). They apply to every deck in the course:\n\n") + notes)
+        }
+        return parts.isEmpty ? "" : parts.joined(separator: "\n\n") + "\n\n"
     }
 
     /// 一条提问实际发给模型的文字：页码、选中内容、指令和讲解方式。发出时保存，之后原样用作历史。
@@ -222,6 +350,19 @@ enum PromptBuilder {
     /// 起点只在丢弃时才移动，前缀能连续几轮保持不变。
     /// - Parameter chunkBudget: 决定切块大小的稳定预算（为空时用 tokenBudget）。
     static func historyWindow(_ past: [ChatMessage], limit: Int, tokenBudget: Int? = nil, chunkBudget: Int? = nil) -> [ChatMessage] {
+        let turns = validTurns(past)
+        let limit = max(0, limit) / 2 * 2
+        guard limit > 0, !turns.isEmpty else { return [] }
+        let step = max(2, limit / 4 * 2)
+        var drop = turns.count > limit ? (turns.count - limit + step - 1) / step * step : 0
+        if let tokenBudget {
+            drop = max(drop, tokenDrop(turns, budget: tokenBudget, chunkBudget: chunkBudget ?? tokenBudget))
+        }
+        return Array(turns.dropFirst(drop))
+    }
+
+    /// 能作为历史发送的轮次：一问一答成对，跳过出错或没有内容的回答。
+    static func validTurns(_ past: [ChatMessage]) -> [ChatMessage] {
         var turns: [ChatMessage] = []
         var index = 0
         while index < past.count {
@@ -237,14 +378,7 @@ enum PromptBuilder {
                 index += 1
             }
         }
-        let limit = max(0, limit) / 2 * 2
-        guard limit > 0, !turns.isEmpty else { return [] }
-        let step = max(2, limit / 4 * 2)
-        var drop = turns.count > limit ? (turns.count - limit + step - 1) / step * step : 0
-        if let tokenBudget {
-            drop = max(drop, tokenDrop(turns, budget: tokenBudget, chunkBudget: chunkBudget ?? tokenBudget))
-        }
-        return Array(turns.dropFirst(drop))
+        return turns
     }
 
     /// 超出 token 预算时从哪里开始保留。按累计 token 把历史切成大约半个（稳定）预算一块，
@@ -324,13 +458,13 @@ enum PromptBuilder {
 
         学生每条消息的末尾附有【讲解方式】：学生在设置里选的篇幅、图和例题，有时还有学生自己写的要求，以最新一条消息里的为准。照着写就行，但不要在回答里提到这些设置，比如不要说“按你的设置，这里不举例”。学生自己写的要求和前面几项冲突时，以学生自己写的为准；学生在消息正文里直接提的要求（“详细点”“举个例子”“画个图”“出几道题”等）优先于整个【讲解方式】。
 
-        ## 课件
+        \(memorySections(context))## 课件
 
         《\(context.title)》，共 \(context.pageCount) 页。
 
         <courseware>
         \(coursewareText(context))
-        </courseware>
+        </courseware>\(recordSection(context))
         """
     }
 
@@ -374,13 +508,13 @@ enum PromptBuilder {
 
         Each student message ends with an [Explanation style] block: the length, diagram and example settings the student chose, sometimes followed by their own requests. The block in the latest message is the one that counts. Follow it, but don't mention it in your answers (no "per your settings, I'll skip the example"). Where the student's own requests conflict with the other items, their own requests win; anything the student asks for in the body of a message, such as more detail, an example, a diagram or a quiz, takes precedence over the whole block.
 
-        ## The deck
+        \(memorySections(context))## The deck
 
         "\(context.title)", \(context.pageCount) pages.
 
         <courseware>
         \(coursewareText(context))
-        </courseware>
+        </courseware>\(recordSection(context))
         """
     }
 
@@ -480,8 +614,9 @@ enum TokenEstimate {
         return (wide * 6 + narrow * 3 + 9) / 10
     }
 
-    /// 例如 128K、1M。
+    /// 例如 860、128K、1M。
     static func label(_ tokens: Int) -> String {
+        if tokens < 1_000 { return "\(max(tokens, 0))" }
         if tokens >= 1_000_000 {
             let value = Double(tokens) / 1_000_000
             return (value == value.rounded() ? String(Int(value)) : String(format: "%.1f", value)) + "M"

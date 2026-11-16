@@ -805,7 +805,7 @@
 
     // 正文
     const body = el.querySelector('.content');
-    if (content !== prev.content || m.streaming !== prev.streaming) {
+    if (content !== prev.content || m.streaming !== prev.streaming || m.status !== prev.status) {
       const frag = renderMarkdown(content, { streaming: m.streaming });
       reuseImages(body, frag);
       if (m.streaming) {
@@ -814,6 +814,13 @@
           dots.className = 'typing';
           dots.innerHTML = '<span></span><span></span><span></span>';
           frag.append(dots);
+          // 读取课件、整理较早的对话、重新连接时的说明
+          if (m.status) {
+            const status = document.createElement('div');
+            status.className = 'typing-status';
+            status.textContent = m.status;
+            frag.append(status);
+          }
         } else if (content.trim()) {
           const caret = document.createElement('span');
           caret.className = 'caret';
@@ -844,6 +851,7 @@
         m.model ? esc(m.model) : '',
         m.usage ? `${t('输入', 'In')} ${formatTokens(m.usage.prompt)}` : '',
         m.usage && m.usage.cacheHit ? `${t('缓存', 'Cached')} ${formatTokens(m.usage.cacheHit)}` : '',
+        m.usage && m.usage.cacheWrite ? `${t('写入缓存', 'Cache write')} ${formatTokens(m.usage.cacheWrite)}` : '',
         m.usage ? `${t('输出', 'Out')} ${formatTokens(m.usage.completion)}` : '',
       ].filter(Boolean).join(' · ');
       foot.hidden = false;
@@ -860,7 +868,7 @@
       foot.hidden = true;
     }
 
-    entry.rendered = { content, reasoning, streaming: m.streaming };
+    entry.rendered = { content, reasoning, streaming: m.streaming, status: m.status };
   }
 
   function renderEntry(m) {

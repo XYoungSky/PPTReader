@@ -9,6 +9,8 @@ struct TokenUsage: Codable, Equatable {
     var prompt: Int
     var completion: Int
     var cacheHit: Int?
+    /// 这次写入缓存的输入 token（Kimi 等单独报告写入的服务商才有）。
+    var cacheWrite: Int?
 }
 
 struct ChatMessage: Codable, Identifiable, Equatable {
@@ -44,4 +46,17 @@ struct ChatThread: Codable {
     var messages: [ChatMessage] = []
     var lastPage: Int?
     var updatedAt = Date()
+    /// 较早的对话整理成的学习记录（1.6 起）。
+    var record: StudyRecord?
+}
+
+/// 对话超出预算时，把要丢掉的较早对话整理成的学习记录。放在系统提示末尾，代替被丢掉的消息，
+/// 让模型记得讲过什么、学生在哪里卡住、用过哪些例子（参考 Codex、Claude Code 的上下文压缩）。
+struct StudyRecord: Codable, Equatable {
+    var text: String
+    /// 整理进记录的最后一条消息；之后的消息照常作为历史发送。
+    var throughID: UUID
+    /// 记录累计覆盖的消息条数，只用于显示。
+    var messageCount: Int
+    var createdAt = Date()
 }
