@@ -18,6 +18,8 @@ cp Resources/Info.plist "$APP/Contents/Info.plist"
 cp -R Resources/Web "$APP/Contents/Resources/Web"
 [[ -f Resources/AppIcon.icns ]] && cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 
+# Finder 在资源目录里留下的 .DS_Store 不放进应用包
+find "$APP" -name .DS_Store -delete
 xattr -cr "$APP"
 # 本地使用的临时签名（ad-hoc），无需开发者账号
 codesign --force --deep --sign - "$APP" >/dev/null
