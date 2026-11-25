@@ -156,10 +156,20 @@ private struct Composer: View {
         @Bindable var chat = model.chat
         let reader = model.reader
         let selection = reader?.selection ?? ""
+        let region = reader?.region
         let busy = reader == nil || chat.isStreaming
 
         VStack(alignment: .leading, spacing: 12) {
-            if !selection.isEmpty {
+            if let region, let reader {
+                // 框选的区域随下一条提问发出
+                SelectionPreview(text: reader.regionText.isEmpty
+                                    ? tr("第 \(region.page) 页的框选区域", "Selected area on page \(region.page)")
+                                    : reader.regionText,
+                                 icon: "rectangle.dashed", clearHelp: tr("取消框选", "Clear selection box")) {
+                    reader.clearRegion()
+                }
+                .transition(.asymmetric(insertion: .opacity.combined(with: .offset(y: 6)), removal: .opacity))
+            } else if !selection.isEmpty {
                 SelectionPreview(text: selection) { reader?.pdf.clearSelection() }
                     .transition(.asymmetric(insertion: .opacity.combined(with: .offset(y: 6)), removal: .opacity))
             }
@@ -226,6 +236,7 @@ private struct Composer: View {
         )
         .animation(.easeOut(duration: 0.15), value: focused)
         .animation(Motion.snappy, value: selection.isEmpty)
+        .animation(Motion.snappy, value: region == nil)
         .contentShape(Rectangle())
         .onTapGesture { focused = true }
         .padding(.horizontal, 16)
@@ -264,11 +275,13 @@ private struct Composer: View {
 
 private struct SelectionPreview: View {
     let text: String
+    var icon = "text.quote"
+    var clearHelp = tr("取消引用", "Remove quote")
     let onClear: () -> Void
 
     var body: some View {
         HStack(alignment: .center, spacing: 10) {
-            Image(systemName: "text.quote")
+            Image(systemName: icon)
                 .font(.system(size: 11))
                 .foregroundStyle(Theme.text3)
             Text(text)
@@ -284,7 +297,7 @@ private struct SelectionPreview: View {
                     .background(Circle().fill(Theme.hover))
             }
             .buttonStyle(.plain)
-            .help(tr("取消引用", "Remove quote"))
+            .help(clearHelp)
         }
         .font(.system(size: 12))
         .fixedSize(horizontal: false, vertical: true)

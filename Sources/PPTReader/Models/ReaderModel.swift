@@ -20,6 +20,14 @@ final class ReaderModel {
     var selectionRect: CGRect?
     /// 松开鼠标后才显示选中工具条，拖选过程中不打扰。
     var selectionBarVisible = false
+    /// 框选的区域（Shift + 拖动，或在设置里改成默认框选）。提问时附上框内截图和文字。
+    private(set) var region: PageRegion?
+    /// 框内的文字（框选时取出）。
+    private(set) var regionText = ""
+    /// 框在阅读区中的位置（左上角为原点）：拖动过程中和框选之后都用它画框；滚出可视区域时为 nil。
+    var regionRect: CGRect?
+    /// 框选完成后显示的浮动工具条。
+    var regionBarVisible = false
     private(set) var text: DocumentText?
     /// 发给模型的课件文字。OCR 每识别几页 `text` 就会更新一次，如果直接用它，这段时间里每次请求的系统提示都不同，
     /// 前缀缓存全部失效；所以只在拿到文字层、OCR 每完成约四分之一和全部完成时更新，最多变动几次。
@@ -48,6 +56,19 @@ final class ReaderModel {
     }
 
     var title: String { sourceURL.deletingPathExtension().lastPathComponent }
+
+    func setRegion(_ region: PageRegion, text: String) {
+        self.region = region
+        regionText = text
+        regionBarVisible = true
+    }
+
+    func clearRegion() {
+        region = nil
+        regionText = ""
+        regionRect = nil
+        regionBarVisible = false
+    }
 
     func pageDidChange(to page: Int) {
         guard page != currentPage else { return }
@@ -92,6 +113,16 @@ final class ReaderModel {
     func pageImage(_ number: Int) async -> Data? {
         await renderer.jpeg(page: number)
     }
+
+    /// 框选区域的截图（JPEG）。只渲染框内的部分，框很小时也不会生成一张巨大的整页图。
+    func regionImage(_ region: PageRegion) async -> Data? {
+        await renderer.jpeg(region: region)
+    }
+
+    /// 对话气泡里显示的缩略图（长边 480 像素）。
+    func regionThumbnail(_ region: PageRegion) async -> Data? {
+        await renderer.jpeg(region: region, thumbnail: true)
+    }
 }
 
 /// 在后台渲染页面截图。单独打开一份文档，避免和界面上的 PDFView 争用同一个对象；最近几页的结果缓存起来，
@@ -116,16 +147,43 @@ actor PageRenderer {
         let longest: CGFloat = bounds.width >= bounds.height ? 1280 : 1600
         let scale = longest / max(bounds.width, bounds.height, 1)
         let image = page.thumbnail(of: CGSize(width: bounds.width * scale, height: bounds.height * scale), for: .mediaBox)
-        guard let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return nil }
-        let data = NSMutableData()
-        guard let destination = CGImageDestinationCreateWithData(data, UTType.jpeg.identifier as CFString, 1, nil) else { return nil }
-        CGImageDestinationAddImage(destination, cgImage, [kCGImageDestinationLossyCompressionQuality: 0.8] as CFDictionary)
-        guard CGImageDestinationFinalize(destination) else { return nil }
-        let jpeg = data as Data
+        guard let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil),
+              let jpeg = Self.encode(cgImage) else { return nil }
         cache[number] = jpeg
         recent.append(number)
         if recent.count > 6 { cache[recent.removeFirst()] = nil }
         return jpeg
+    }
+
+    /// 框选区域的截图。和阅读区一样按裁切框（cropBox）显示方向渲染；`draw(with:to:)` 会按页面旋转摆正。
+    func jpeg(region: PageRegion, thumbnail: Bool = false) -> Data? {
+        if document == nil { document = PDFDocument(url: url) }
+        guard let page = document?.page(at: region.page - 1) else { return nil }
+        let bounds = page.bounds(for: .cropBox)
+        let quarterTurns = ((page.rotation / 90) % 4 + 4) % 4
+        let pageSize = quarterTurns % 2 == 1 ? CGSize(width: bounds.height, height: bounds.width) : bounds.size
+        let area = region.pointRect(pageSize: pageSize)
+        let scale = thumbnail ? PageRegion.thumbnailScale(for: area.size) : PageRegion.renderScale(for: area.size)
+        let (width, height) = PageRegion.pixelSize(for: area.size, scale: scale)
+        guard let space = CGColorSpace(name: CGColorSpace.sRGB),
+              let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+                                      space: space, bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) else { return nil }
+        context.setFillColor(CGColor(gray: 1, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        context.interpolationQuality = .high
+        context.scaleBy(x: scale, y: scale)
+        context.translateBy(x: -area.minX, y: -area.minY)
+        page.draw(with: .cropBox, to: context)
+        guard let image = context.makeImage() else { return nil }
+        return Self.encode(image)
+    }
+
+    private static func encode(_ image: CGImage) -> Data? {
+        let data = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(data, UTType.jpeg.identifier as CFString, 1, nil) else { return nil }
+        CGImageDestinationAddImage(destination, image, [kCGImageDestinationLossyCompressionQuality: 0.8] as CFDictionary)
+        guard CGImageDestinationFinalize(destination) else { return nil }
+        return data as Data
     }
 }
 

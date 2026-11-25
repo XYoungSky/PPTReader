@@ -11,23 +11,32 @@ APP="build/Products.noindex/PPTReader.app"
 swift build -c release --arch arm64
 BIN_DIR=$(swift build -c release --arch arm64 --show-bin-path)
 
-rm -rf "$APP"
-mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-cp "$BIN_DIR/PPTReader" "$APP/Contents/MacOS/PPTReader"
-cp Resources/Info.plist "$APP/Contents/Info.plist"
-cp -R Resources/Web "$APP/Contents/Resources/Web"
-[[ -f Resources/AppIcon.icns ]] && cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
+# 在不受 iCloud 同步的临时目录里组装和签名：项目放在同步的文件夹（如桌面）里时，
+# 系统可能在 xattr -cr 之后、codesign 之前又给文件加上扩展属性，签名就会偶尔失败。
+STAGE=$(mktemp -d "${TMPDIR:-/tmp}/pptreader-build.XXXXXX")
+trap 'rm -rf "$STAGE"' EXIT
+STAGED="$STAGE/PPTReader.app"
+
+mkdir -p "$STAGED/Contents/MacOS" "$STAGED/Contents/Resources"
+cp "$BIN_DIR/PPTReader" "$STAGED/Contents/MacOS/PPTReader"
+cp Resources/Info.plist "$STAGED/Contents/Info.plist"
+cp -R Resources/Web "$STAGED/Contents/Resources/Web"
+[[ -f Resources/AppIcon.icns ]] && cp Resources/AppIcon.icns "$STAGED/Contents/Resources/AppIcon.icns"
 
 # Finder 在资源目录里留下的 .DS_Store 不放进应用包
-find "$APP" -name .DS_Store -delete
-xattr -cr "$APP"
+find "$STAGED" -name .DS_Store -delete
+xattr -cr "$STAGED"
 # 本地使用的临时签名（ad-hoc），无需开发者账号
-codesign --force --deep --sign - "$APP" >/dev/null
+codesign --force --deep --sign - "$STAGED" >/dev/null
+codesign --verify --deep --strict "$STAGED"
 
+rm -rf "$APP"
+mkdir -p "$(dirname "$APP")"
+ditto "$STAGED" "$APP"
 echo "✅ 已生成 $APP（$(du -sh "$APP" | cut -f1)）"
 
 if [[ "${1:-}" == "--install" ]]; then
   rm -rf "/Applications/PPTReader.app"
-  cp -R "$APP" /Applications/
+  ditto "$STAGED" /Applications/PPTReader.app
   echo "✅ 已安装到 /Applications/PPTReader.app"
 fi

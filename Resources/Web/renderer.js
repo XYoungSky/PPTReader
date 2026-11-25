@@ -775,7 +775,12 @@
     if (m.auto) meta.push(`<span>${t('自动讲解', 'Auto')}</span>`);
     entry.el.innerHTML =
       '<div class="user-wrap"><div class="bubble">' +
-      (m.selection ? `<div class="selection-quote">${esc(m.selection)}</div>` : '') +
+      (m.regionThumb
+        ? `<a class="region-thumb" data-page="${m.regionPage}" title="${esc(t(`跳到第 ${m.regionPage} 页`, `Go to page ${m.regionPage}`))}"><img src="${m.regionThumb}" alt="${esc(t('框选区域', 'Selected area'))}"></a>`
+        : '') +
+      (m.regionPage
+        ? `<div class="selection-quote region-quote"><span class="region-label">${t(`第 ${m.regionPage} 页的框选区域`, `Selected area on page ${m.regionPage}`)}</span>${m.selection ? '\n' + esc(m.selection) : ''}</div>`
+        : (m.selection ? `<div class="selection-quote">${esc(m.selection)}</div>` : '')) +
       '<div class="md bubble-text"></div></div>' +
       (meta.length ? `<div class="msg-meta">${meta.join('<span class="dot">·</span>')}</div>` : '') +
       '</div>';
@@ -1016,9 +1021,9 @@
     }
     entry.data = m;
     if (m.role === 'user') {
-      if (!entry.rendered || entry.rendered.content !== m.content) {
+      if (!entry.rendered || entry.rendered.content !== m.content || entry.rendered.thumb !== m.regionThumb) {
         renderUser(entry, m);
-        entry.rendered = { content: m.content };
+        entry.rendered = { content: m.content, thumb: m.regionThumb };
       }
       return;
     }

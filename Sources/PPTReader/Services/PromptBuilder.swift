@@ -4,7 +4,9 @@ import Foundation
 enum ChatIntent {
     case explainPage(auto: Bool)
     case selection(SelectionAction, String)
-    case question(String, selection: String?)
+    /// 框选区域：截图和框内文字一起提问。
+    case region(SelectionAction, PageRegion, text: String)
+    case question(String, selection: String?, region: PageRegion? = nil)
     case quick(QuickAction)
     /// 上一条回答达到长度上限被截断，接着写。
     case continuation
@@ -126,8 +128,28 @@ enum PromptBuilder {
                 tr("解释一下我选中的这段内容。", "Explain the passage I selected."))
             }
             return ChatMessage(role: .user, content: title, prompt: prompt, page: page, selection: text)
-        case .question(let text, let selection):
-            return ChatMessage(role: .user, content: text, page: page, selection: selection)
+        case .region(let action, let region, let text):
+            let (title, prompt): (String, String) = switch action {
+            case .explain: (
+                tr("解释框选内容", "Explain selected area"),
+                tr("解释一下我在课件上框出来的这块内容（图、公式或文字）：它是什么意思，为什么这样，放在这一页和整份课件里起什么作用。",
+                   "Explain the area I boxed on the slide (a figure, formula or text): what it means, why it's so, and what it's doing on this page and in the deck as a whole."))
+            case .translate: (
+                tr("翻译框选内容", "Translate selected area"),
+                tr("把我框出来的这块内容翻译一下（外文译成中文，中文译成英文），直接给译文。公式和专业术语保留原文；有难懂的术语，在译文后面结合课件简单注一下。图里的文字也一并翻译。",
+                   "Translate the area I boxed (into English, or into Chinese if it's already English). Give the translation straight away, keeping formulas and technical terms as they are; if any terms are hard to follow, add a short note after it using the deck's context. Translate any text inside figures too."))
+            case .example: (
+                tr("举例说明框选内容", "Examples for selected area"),
+                tr("针对我框出来的这块内容举 1–2 个具体的例子，数值例子、生活里的类比或代码都行，并说明例子和课件里的知识点是怎么对应的。",
+                   "Give 1–2 concrete examples of the area I boxed (numbers, an everyday analogy or code all work), and show how each one maps onto the ideas in the deck."))
+            case .ask: (
+                tr("就框选内容提问", "About the selected area"),
+                tr("解释一下我框出来的这块内容。", "Explain the area I boxed."))
+            }
+            return ChatMessage(role: .user, content: title, prompt: prompt, page: region.page,
+                               selection: text.isEmpty ? nil : text, region: region)
+        case .question(let text, let selection, let region):
+            return ChatMessage(role: .user, content: text, page: region?.page ?? page, selection: selection, region: region)
         case .continuation:
             return ChatMessage(role: .user, content: tr("继续", "Continue"), prompt: tr(
                 "上一条回答达到长度上限，在中途断开了。从断开的地方直接接着写，不要重复已经写过的内容，也不要加开场白。如果正好断在公式、表格、代码块或图（SVG / Mermaid）的中间，就把这一个公式、表格、代码块或图从头完整地重写一遍。",
@@ -314,13 +336,32 @@ enum PromptBuilder {
         if let page = message.page, let supplement = pageSupplement(page, context: context) {
             parts.append(supplement)
         }
-        if let selection = message.selection, !selection.isEmpty {
+        if let region = message.region {
+            parts.append(regionText(region, selection: message.selection, hasImage: context.pageImageJPEG != nil))
+        } else if let selection = message.selection, !selection.isEmpty {
             let page = message.page ?? context.currentPage
             parts.append(tr("【我在第 \(page) 页选中的内容】", "[Selected on page \(page)]") + "\n\(selection)")
         }
         parts.append(message.instruction)
         parts.append(context.explanationStyle.block)
         return parts.joined(separator: "\n\n")
+    }
+
+    /// 框选区域：说明位置，有截图时提示截图附在后面，再附上框内文字。
+    /// 没有截图（模型不支持识图或关闭了截图）时只靠框内文字。
+    static func regionText(_ region: PageRegion, selection: String?, hasImage: Bool) -> String {
+        let percent = { (value: Double) in Int((value * 100).rounded()) }
+        let position = tr("（位置：从左 \(percent(region.x))%、从上 \(percent(region.y))%，宽 \(percent(region.width))%、高 \(percent(region.height))%）",
+                          " (position: \(percent(region.x))% from left, \(percent(region.y))% from top, \(percent(region.width))% wide, \(percent(region.height))% tall)")
+        var lines = [tr("【我在第 \(region.page) 页框选的区域】", "[Area I boxed on page \(region.page)]") + position]
+        if hasImage { lines.append(tr("框内的截图附在这条消息后面。", "A screenshot of the area is attached after this message.")) }
+        let text = selection?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !text.isEmpty {
+            lines.append(tr("框内的文字：", "Text inside the box:") + "\n" + text)
+        } else if !hasImage {
+            lines.append(tr("（框内没有可提取的文字，可能是图片。）", "(No text could be extracted from the box; it may be an image.)"))
+        }
+        return lines.joined(separator: "\n")
     }
 
     /// 当前页的文字不在系统提示里时（课件太长被省略，或 OCR 在系统提示定下来之后才完成），补进这条提问。

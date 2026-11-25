@@ -182,6 +182,20 @@ body.is-empty .edge-fade { display: none; }
 }
 
 .selection-quote.expanded { display: block; }
+.region-quote { border-left-style: dashed; }
+/* 框选提问的缩略图：点按跳到那一页 */
+.region-thumb { display: block; width: fit-content; max-width: 100%; margin: 4px 0 8px; cursor: pointer; }
+.region-thumb img {
+  display: block;
+  max-width: min(100%, 240px);
+  max-height: 160px;
+  border-radius: 8px;
+  border: 1px solid var(--hairline);
+  background: #fff;
+  animation: fade-in 0.2s ease-out both;
+}
+.region-thumb:hover img { border-color: var(--hairline-strong); }
+.region-label { font-weight: 600; color: var(--fg-2, inherit); }
 
 /* ---------------------------------------------------------------- 思考过程 */
 

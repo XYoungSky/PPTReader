@@ -39,6 +39,9 @@ final class ChatController {
     @ObservationIgnored private var recordFailedThrough: UUID?
     /// 正在生成的回答上显示的临时状态（读取课件、整理记录、重新连接）。
     @ObservationIgnored private var statuses: [UUID: String] = [:]
+    /// 框选提问的缩略图（data URL），按消息缓存；记录里不存图片，打开课件后按需渲染。
+    @ObservationIgnored private var thumbnails: [UUID: String] = [:]
+    @ObservationIgnored private var thumbnailsPending: Set<UUID> = []
 
     init(settings: AppSettings, store: ChatStore, stats: StatsStore) {
         self.settings = settings
@@ -51,6 +54,8 @@ final class ChatController {
 
     func attach(reader: ReaderModel, thread: ChatThread, course: URL) {
         interruptForSwitch()
+        thumbnails = [:]
+        thumbnailsPending = []
         self.reader = reader
         self.thread = thread
         self.course = course
@@ -131,9 +136,16 @@ final class ChatController {
     func sendDraft() {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, !isStreaming || streamIsAuto else { return }
-        let selection = reader?.selection.trimmingCharacters(in: .whitespacesAndNewlines)
         draft = ""
-        perform(.question(text, selection: selection?.isEmpty == false ? selection : nil))
+        // 有框选时随提问附上框内截图和文字；否则附上选中的文字
+        if let reader, let region = reader.region {
+            let boxText = reader.regionText
+            perform(.question(text, selection: boxText.isEmpty ? nil : boxText, region: region))
+            reader.clearRegion()
+        } else {
+            let selection = reader?.selection.trimmingCharacters(in: .whitespacesAndNewlines)
+            perform(.question(text, selection: selection?.isEmpty == false ? selection : nil))
+        }
         reader?.pdf.clearSelection()
     }
 
@@ -240,7 +252,12 @@ final class ChatController {
                 setStatus(nil, for: replyID)
             }
         }
-        let image = attempt.withImage && settings.sendsImages ? await reader.pageImage(page) : nil
+        // 框选的提问只附框内截图（整页的文字已在系统提示里）；重新生成时按保存的框重新渲染
+        let region = messages.first(where: { $0.id == questionID })?.region
+        var image: Data?
+        if attempt.withImage, settings.sendsImages {
+            image = if let region { await reader.regionImage(region) } else { await reader.pageImage(page) }
+        }
         try Task.checkCancellation()
         guard let questionIndex = messages.firstIndex(where: { $0.id == questionID }) else { throw CancellationError() }
 
@@ -650,6 +667,10 @@ final class ChatController {
         if let page = message.page { dict["page"] = page }
         if let model = message.model, !model.isEmpty { dict["model"] = model }
         if let selection = message.selection { dict["selection"] = selection }
+        if let region = message.region {
+            dict["regionPage"] = region.page
+            if let thumbnail = thumbnails[message.id] { dict["regionThumb"] = thumbnail } else { loadThumbnail(for: message, region) }
+        }
         if let error = message.error { dict["error"] = error }
         if let status = statuses[message.id] { dict["status"] = status }
         if let usage = message.usage {
@@ -657,6 +678,18 @@ final class ChatController {
                              "cacheWrite": usage.cacheWrite ?? 0]
         }
         return dict
+    }
+
+    /// 在后台渲染缩略图，好了以后更新这条消息。
+    private func loadThumbnail(for message: ChatMessage, _ region: PageRegion) {
+        guard let reader, thumbnailsPending.insert(message.id).inserted else { return }
+        let id = message.id
+        Task { [weak self, weak reader] in
+            guard let data = await reader?.regionThumbnail(region), let self, reader === self.reader else { return }
+            self.thumbnailsPending.remove(id)
+            self.thumbnails[id] = "data:image/jpeg;base64," + data.base64EncodedString()
+            if let message = self.messages.first(where: { $0.id == id }) { self.push(message) }
+        }
     }
 
     private func persist() {

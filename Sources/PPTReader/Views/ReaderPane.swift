@@ -6,8 +6,10 @@ struct ReaderPane: View {
     let reader: ReaderModel
 
     var body: some View {
-        PDFReaderView(reader: reader, contextItems: contextItems)
+        PDFReaderView(reader: reader, dragSelectsRegion: model.settings.dragSelectsRegion, contextItems: contextItems)
+            .overlay { regionBox }
             .overlay { selectionBar }
+            .overlay { regionBar }
             .overlay(alignment: .bottom) {
                 if let progress = reader.ocrProgress {
                     HStack(spacing: 8) {
@@ -35,19 +37,53 @@ struct ReaderPane: View {
     private var selectionBar: some View {
         GeometryReader { geometry in
             if reader.selectionBarVisible, let rect = reader.selectionRect, !reader.selection.isEmpty {
-                // 工具条按内容自适应宽度，这里的尺寸只用于贴边时的位置估算
-                let size = CGSize(width: 320, height: 36)
-                let above = rect.minY - size.height / 2 - 10
-                let y = above > size.height / 2 + 6 ? above : min(rect.maxY + size.height / 2 + 10, geometry.size.height - size.height / 2 - 6)
-                let x = min(max(rect.midX, size.width / 2 + 8), geometry.size.width - size.width / 2 - 8)
-                SelectionBar { action in run(action, text: reader.selection) }
-                    .frame(height: size.height)
-                    .fixedSize()
-                    .position(x: x, y: y)
-                    .transition(.opacity.combined(with: .scale(scale: 0.94, anchor: above > 0 ? .bottom : .top)))
+                FloatingBar(rect: rect, container: geometry.size, width: 320) {
+                    SelectionBar { action in run(action, text: reader.selection) }
+                }
             }
         }
         .animation(Motion.content, value: reader.selectionBarVisible)
+    }
+
+    // MARK: 框选
+
+    /// 框选的框：拖动中和框选之后都显示，跟着页面滚动。
+    private var regionBox: some View {
+        GeometryReader { _ in
+            if let rect = reader.regionRect {
+                RoundedRectangle(cornerRadius: 2, style: .continuous)
+                    .fill(Theme.accent.opacity(0.08))
+                    .overlay(RoundedRectangle(cornerRadius: 2, style: .continuous).strokeBorder(Theme.accent, lineWidth: 1.5))
+                    .frame(width: rect.width, height: rect.height)
+                    .position(x: rect.midX, y: rect.midY)
+                    .transition(.opacity)
+            }
+        }
+        .allowsHitTesting(false)
+        .animation(Motion.hover, value: reader.region == nil && reader.regionRect == nil)
+    }
+
+    private var regionBar: some View {
+        GeometryReader { geometry in
+            if reader.regionBarVisible, reader.region != nil, let rect = reader.regionRect {
+                FloatingBar(rect: rect, container: geometry.size, width: 380) {
+                    SelectionBar(onCancel: { reader.clearRegion() }) { action in runRegion(action) }
+                }
+            }
+        }
+        .animation(Motion.content, value: reader.regionBarVisible)
+    }
+
+    private func runRegion(_ action: SelectionAction) {
+        guard let region = reader.region else { return }
+        reader.regionBarVisible = false
+        if action == .ask {
+            // 框留着，作为输入框里的引用随下一条提问发出
+            model.chat.requestFocus()
+        } else {
+            model.chat.perform(.region(action, region, text: reader.regionText))
+            reader.clearRegion()
+        }
     }
 
     private func run(_ action: SelectionAction, text: String) {
@@ -103,10 +139,32 @@ struct ReaderPane: View {
     }
 }
 
-/// 选中文字上方的浮动工具条。
+/// 把浮动工具条摆在目标上方（放不下时放在下方），并且不超出阅读区。
+private struct FloatingBar<Content: View>: View {
+    let rect: CGRect
+    let container: CGSize
+    /// 工具条按内容自适应宽度，这里的宽度只用于贴边时的位置估算。
+    let width: CGFloat
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        let height: CGFloat = 36
+        let above = rect.minY - height / 2 - 10
+        let y = above > height / 2 + 6 ? above : min(rect.maxY + height / 2 + 10, container.height - height / 2 - 6)
+        let x = min(max(rect.midX, width / 2 + 8), container.width - width / 2 - 8)
+        content
+            .frame(height: height)
+            .fixedSize()
+            .position(x: x, y: y)
+            .transition(.opacity.combined(with: .scale(scale: 0.94, anchor: above > 0 ? .bottom : .top)))
+    }
+}
+
+/// 选中文字（或框选区域）上方的浮动工具条。
 private struct SelectionBar: View {
+    /// 框选时显示“取消”。
+    var onCancel: (() -> Void)?
     let action: (SelectionAction) -> Void
-    @ViewState private var appeared = false
 
     var body: some View {
         HStack(spacing: 0) {
@@ -115,6 +173,15 @@ private struct SelectionBar: View {
             item(.example, tr("举例", "Examples"), "lightbulb")
             Rectangle().fill(Theme.border).frame(width: 1, height: 16).padding(.horizontal, 2)
             item(.ask, tr("提问", "Ask"), "text.bubble")
+            if let onCancel {
+                Button(action: onCancel) {
+                    Label(tr("取消", "Cancel"), systemImage: "xmark")
+                        .labelStyle(.iconOnly)
+                        .font(.system(size: 11, weight: .semibold))
+                }
+                .buttonStyle(TextButtonStyle(font: .system(size: 12.5)))
+                .help(tr("取消框选", "Clear selection box") + " (Esc)")
+            }
         }
         .padding(.horizontal, 4)
         .frame(maxHeight: .infinity)
@@ -337,6 +404,7 @@ struct ReaderHeader: View {
 
 struct PDFReaderView: NSViewRepresentable {
     let reader: ReaderModel
+    let dragSelectsRegion: Bool
     let contextItems: (String?) -> [PopMenuItem]
 
     func makeCoordinator() -> Coordinator { Coordinator(reader: reader) }
@@ -351,6 +419,7 @@ struct PDFReaderView: NSViewRepresentable {
         view.backgroundColor = Theme.canvasNSColor
         view.wantsLayer = true
         view.contextItems = contextItems
+        view.dragSelectsRegion = dragSelectsRegion
         reader.pdf.view = view
 
         if reader.currentPage > 1 {
@@ -362,6 +431,7 @@ struct PDFReaderView: NSViewRepresentable {
 
     func updateNSView(_ view: ReaderPDFView, context: Context) {
         view.contextItems = contextItems
+        view.dragSelectsRegion = dragSelectsRegion
     }
 
     static func dismantleNSView(_ view: ReaderPDFView, coordinator: Coordinator) {
@@ -399,23 +469,72 @@ struct PDFReaderView: NSViewRepresentable {
                     let scale = Double(view.scaleFactor)
                     if abs(reader.scale - scale) > 0.001 { reader.scale = scale }
                     self?.updateSelectionRect()
+                    self?.updateRegionRect()
                 }
             })
             // 滚动时让工具条跟随选中文字
             if let clip = view.documentView?.enclosingScrollView?.contentView {
                 clip.postsBoundsChangedNotifications = true
                 observers.append(center.addObserver(forName: NSView.boundsDidChangeNotification, object: clip, queue: .main) { [weak self] _ in
-                    MainActor.assumeIsolated { self?.updateSelectionRect() }
+                    MainActor.assumeIsolated {
+                        self?.updateSelectionRect()
+                        self?.updateRegionRect()
+                    }
                 })
             }
             view.onMouseDown = { [weak self] in
                 self?.reader.selectionBarVisible = false
+                // 点到别处就取消框选，和选中文字一样
+                if self?.reader.region != nil || self?.reader.regionRect != nil { self?.reader.clearRegion() }
             }
             view.onMouseUp = { [weak self] in
                 guard let self else { return }
                 self.updateSelectionRect()
                 self.reader.selectionBarVisible = !self.reader.selection.isEmpty && self.reader.selectionRect != nil
             }
+            view.onRegionChanged = { [weak self, weak view] rect in
+                guard let self, let view else { return }
+                self.reader.regionRect = Self.flipped(rect, in: view)
+            }
+            view.onRegionFinished = { [weak self, weak view] page, rect in
+                guard let self, let view else { return }
+                self.finishRegion(page: page, rect: rect, in: view)
+            }
+            view.onCancel = { [weak self] in
+                guard let self else { return }
+                if self.reader.region != nil || self.reader.regionRect != nil { self.reader.clearRegion() }
+                self.reader.selectionBarVisible = false
+                self.view?.clearSelection()
+            }
+        }
+
+        private func finishRegion(page: PDFPage, rect: CGRect?, in view: ReaderPDFView) {
+            guard let rect, let document = view.document else {
+                reader.clearRegion()
+                return
+            }
+            let pageRect = view.convert(page.bounds(for: view.displayBox), from: page)
+            guard let region = PageRegion.normalized(page: document.index(for: page) + 1, rect: rect, in: pageRect) else {
+                reader.clearRegion()
+                return
+            }
+            let text = page.selection(for: view.convert(rect, to: page))?.string?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            reader.setRegion(region, text: text)
+            updateRegionRect()
+        }
+
+        /// 滚动、缩放后让框跟着页面走。
+        private func updateRegionRect() {
+            guard let view, let region = reader.region, let page = view.document?.page(at: region.page - 1) else { return }
+            let pageRect = view.convert(page.bounds(for: view.displayBox), from: page)
+            let flipped = Self.flipped(region.rect(in: pageRect), in: view)
+            reader.regionRect = flipped.intersects(view.bounds) ? flipped : nil
+        }
+
+        /// PDFView 的坐标 y 轴向上；SwiftUI 叠加层的原点在左上角。
+        private static func flipped(_ rect: CGRect, in view: NSView) -> CGRect {
+            CGRect(x: rect.minX, y: view.bounds.height - rect.maxY, width: rect.width, height: rect.height)
         }
 
         private func updateSelectionRect() {
@@ -437,11 +556,19 @@ struct PDFReaderView: NSViewRepresentable {
     }
 }
 
-/// 用自绘菜单替换系统右键菜单，并把鼠标按下/松开告知选中工具条。
+/// 用自绘菜单替换系统右键菜单，把鼠标按下/松开告知选中工具条，并处理框选。
 final class ReaderPDFView: PDFView {
     var contextItems: ((String?) -> [PopMenuItem])?
     var onMouseDown: (() -> Void)?
     var onMouseUp: (() -> Void)?
+    /// 拖动默认是框选（设置里切换）；按住 Shift 临时换成另一种。
+    var dragSelectsRegion = false
+    /// 框选拖动中：框在视图中的位置（y 轴向上）。
+    var onRegionChanged: ((CGRect) -> Void)?
+    /// 框选结束：所在页和框（视图坐标，已裁到页面内）；框太小时为 nil。
+    var onRegionFinished: ((PDFPage, CGRect?) -> Void)?
+    /// Esc。
+    var onCancel: (() -> Void)?
     /// 恢复上次阅读位置：等视图有了实际尺寸再跳转，否则自动缩放会把位置重置回第一页。
     var pendingPage: PDFPage?
 
@@ -463,6 +590,7 @@ final class ReaderPDFView: PDFView {
 
     override func mouseDown(with event: NSEvent) {
         onMouseDown?()
+        if wantsRegion(event.modifierFlags), let window, trackRegion(from: event, in: window) { return }
         super.mouseDown(with: event)
         // PDFView 可能在 mouseDown 内部跟踪拖选：返回时鼠标若已松开，就在这里收尾
         if NSApp.currentEvent?.type == .leftMouseUp { onMouseUp?() }
@@ -474,6 +602,84 @@ final class ReaderPDFView: PDFView {
     }
 
     override func menu(for event: NSEvent) -> NSMenu? { nil }
+
+    // MARK: 框选
+
+    private func wantsRegion(_ flags: NSEvent.ModifierFlags) -> Bool {
+        dragSelectsRegion != flags.contains(.shift)
+    }
+
+    /// 跟踪一次框选拖动。没有拖动（只是点按）时返回 false：把松开事件放回队列，交给 PDFView 照常处理
+    /// （点链接、取消选中、Shift + 点按扩展选区）。
+    private func trackRegion(from down: NSEvent, in window: NSWindow) -> Bool {
+        let start = convert(down.locationInWindow, from: nil)
+        guard let page = page(for: start, nearest: false) else { return false }
+        // 起点记在页面坐标里：拖到边缘自动滚动时，视图坐标会变
+        let anchor = convert(start, to: page)
+        var dragging = false
+        var current = start
+        func box() -> (CGRect, CGRect) {
+            let origin = convert(anchor, from: page)
+            let pageRect = convert(page.bounds(for: displayBox), from: page)
+            let rect = CGRect(x: min(origin.x, current.x), y: min(origin.y, current.y),
+                              width: abs(current.x - origin.x), height: abs(current.y - origin.y))
+            return (rect.intersection(pageRect), pageRect)
+        }
+        while let event = window.nextEvent(matching: [.leftMouseDragged, .leftMouseUp]) {
+            current = convert(event.locationInWindow, from: nil)
+            if event.type == .leftMouseUp {
+                guard dragging else {
+                    window.postEvent(event, atStart: true)
+                    return false
+                }
+                let (rect, _) = box()
+                let valid = !rect.isNull && rect.width >= PageRegion.minimumSide && rect.height >= PageRegion.minimumSide
+                onRegionFinished?(page, valid ? rect : nil)
+                return true
+            }
+            if !dragging {
+                guard hypot(current.x - start.x, current.y - start.y) >= 4 else { continue }
+                dragging = true
+                clearSelection()
+            }
+            documentView?.autoscroll(with: event)
+            let (rect, _) = box()
+            if !rect.isNull { onRegionChanged?(rect) }
+        }
+        return true
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        if updateRegionCursor(event.modifierFlags, at: convert(event.locationInWindow, from: nil)) { return }
+        super.mouseMoved(with: event)
+    }
+
+    override func flagsChanged(with event: NSEvent) {
+        super.flagsChanged(with: event)
+        guard let window else { return }
+        let point = convert(window.mouseLocationOutsideOfEventStream, from: nil)
+        guard bounds.contains(point) else { return }
+        // 只在刚才显示的是十字光标时换回来，按 ⌘ 等其他修饰键不影响 PDFView 自己的光标
+        let wasCrosshair = showsCrosshair
+        if !updateRegionCursor(event.modifierFlags, at: point), wasCrosshair { NSCursor.arrow.set() }
+    }
+
+    private var showsCrosshair = false
+
+    /// 框选模式下，鼠标在页面上时显示十字光标。
+    private func updateRegionCursor(_ flags: NSEvent.ModifierFlags, at point: CGPoint) -> Bool {
+        guard wantsRegion(flags), page(for: point, nearest: false) != nil else {
+            showsCrosshair = false
+            return false
+        }
+        NSCursor.crosshair.set()
+        showsCrosshair = true
+        return true
+    }
+
+    override func cancelOperation(_ sender: Any?) {
+        onCancel?()
+    }
 
     override func rightMouseDown(with event: NSEvent) {
         guard let window, let contextItems else { return }

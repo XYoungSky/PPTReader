@@ -26,6 +26,8 @@ struct ChatMessage: Codable, Identifiable, Equatable {
     /// 发送这条消息时正在看的页码（从 1 开始）。
     var page: Int?
     var selection: String?
+    /// 框选的区域（1.8 起）：截图在请求时按它重新渲染，selection 里是框内的文字。
+    var region: PageRegion?
     var isAuto = false
     /// 一键讲解/自动讲解的目标页，用于判断某页是否已讲解过。
     var explainsPage: Int?

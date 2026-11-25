@@ -569,6 +569,16 @@ private struct ExplainSettings: View {
                 }
             }
 
+            SettingsCard(footer: tr("框选后可以就框内的图、公式或文字提问：框内截图和文字会一起发给模型；模型不支持识图或关闭了截图时只发文字。",
+                                    "After boxing an area you can ask about the figure, formula or text inside it: a screenshot of the box and its text are sent together, or just the text if the model can't see images or screenshots are off.")) {
+                SettingsRow(title: tr("在课件上拖动", "Dragging on slides"),
+                            detail: tr("按住 Shift 拖动时换成另一种", "Hold Shift while dragging for the other one"), divider: false) {
+                    SegmentedPicker(selection: $settings.dragSelectsRegion,
+                                    options: [(false, tr("选文字", "Select text")), (true, tr("框选", "Draw box"))])
+                        .accessibilityLabel(tr("在课件上拖动", "Dragging on slides"))
+                }
+            }
+
             SettingsCard(title: tr("上下文", "Context"),
                          footer: tr("课件或对话超出上限时，保留当前页附近的课件和最近的对话。模型的上下文窗口在「模型」中设置。",
                                     "When the deck or chat exceeds a limit, the pages around the current one and the latest messages are kept. Set the model's context window under Model.")) {
