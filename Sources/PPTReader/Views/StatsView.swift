@@ -90,6 +90,7 @@ struct StatsView: View {
                     if !summary.decks.isEmpty {
                         DeckList(rows: summary.decks, roots: courseRoots, openDeck: openDeck)
                     }
+                    if !summary.tasks.isEmpty { TaskList(rows: summary.tasks, partial: summary.tasksPartial) }
                     if summary.models.contains(where: { !$0.name.isEmpty }) { ModelList(rows: summary.models) }
                 }
             }
@@ -779,6 +780,38 @@ private struct DeckList: View {
         if pages > 0 { parts.append(tr("\(pages) 页", pages == 1 ? "1 page" : "\(pages) pages")) }
         if interactions > 0 { parts.append(tr("\(interactions) 次问答", interactions == 1 ? "1 Q&A" : "\(interactions) Q&As")) }
         return parts.joined(separator: " · ")
+    }
+}
+
+/// 各类任务的 Token 用量，用来看给任务换的模型省了多少。
+private struct TaskList: View {
+    let rows: [StatsSummary.TaskRow]
+    /// 范围内有 1.9 之前的用量，没有按任务记录。
+    let partial: Bool
+
+    var body: some View {
+        let peak = Double(rows.map(\.tally.total).max() ?? 0)
+        RankCard(title: tr("任务", "Tasks"), trailing: partial ? AnyView(note) : nil) {
+            ForEach(rows) { row in
+                RankRow(
+                    icon: row.task.icon,
+                    title: row.task.title,
+                    detail: StatsFormat.compact(row.tally.total) + tr(" Token · ", " tokens · ")
+                        + tr("\(row.tally.requests) 次", row.tally.requests == 1 ? "1 request" : "\(row.tally.requests) requests"),
+                    fraction: peak > 0 ? Double(row.tally.total) / peak : 0,
+                    help: tr("输入 ", "Input ") + StatsFormat.compact(row.tally.prompt) + " · "
+                        + tr("输出 ", "Output ") + StatsFormat.compact(row.tally.completion),
+                    action: nil
+                )
+            }
+        }
+    }
+
+    private var note: some View {
+        Text(tr("1.9 起按任务记录", "Recorded by task since 1.9"))
+            .font(.system(size: 11))
+            .foregroundStyle(Theme.text3)
+            .padding(.trailing, 4)
     }
 }
 

@@ -74,6 +74,8 @@ struct StatsDay: Codable, Equatable {
     var decks: [String: DeckDay] = [:]
     /// 模型名 → 当天用量；空字符串表示没有记录模型的旧对话。
     var models: [String: TokenTally] = [:]
+    /// 任务（`ModelTask` 的原始值）→ 当天用量。1.9 起记录，更早的日子为空。
+    var tasks: [String: TokenTally] = [:]
 
     init() {}
 
@@ -81,6 +83,7 @@ struct StatsDay: Codable, Equatable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         decks = try c.decodeIfPresent([String: DeckDay].self, forKey: .decks) ?? [:]
         models = try c.decodeIfPresent([String: TokenTally].self, forKey: .models) ?? [:]
+        tasks = (try? c.decodeIfPresent([String: TokenTally].self, forKey: .tasks)) ?? [:]
     }
 }
 
@@ -96,8 +99,40 @@ struct StatsLog: Codable, Equatable {
             var target = days[key] ?? StatsDay()
             for (deck, value) in day.decks { target.decks[deck, default: DeckDay()].merge(value) }
             for (model, value) in day.models { target.models[model, default: TokenTally()] += value }
+            for (task, value) in day.tasks { target.tasks[task, default: TokenTally()] += value }
             days[key] = target
         }
+    }
+
+    /// 记一次回答：计入课件、模型和任务的用量；讲解和提问另外计次数。
+    mutating func addReply(deck: String, page: Int?, model: String?, kind: ReplyKind, task: ModelTask?, usage: TokenUsage?, at date: Date) {
+        let tally = Self.tally(usage)
+        let key = Self.key(for: date)
+        var day = days[key] ?? StatsDay()
+        var entry = day.decks[deck] ?? DeckDay()
+        switch kind {
+        case .explain: entry.explains += 1
+        case .question: entry.questions += 1
+        case .housekeeping: break
+        }
+        if let page { entry.insertPage(page) }
+        entry.tokens += tally
+        day.decks[deck] = entry
+        day.models[model ?? "", default: TokenTally()] += tally
+        if let task { day.tasks[task.rawValue, default: TokenTally()] += tally }
+        days[key] = day
+    }
+
+    static func tally(_ usage: TokenUsage?) -> TokenTally {
+        var tally = TokenTally()
+        tally.requests = 1
+        if let usage {
+            tally.prompt = usage.prompt
+            tally.completion = usage.completion
+            tally.cacheHit = usage.cacheHit ?? 0
+            tally.cacheWrite = usage.cacheWrite ?? 0
+        }
+        return tally
     }
 
     static func key(for date: Date, calendar: Calendar = .current) -> String {
@@ -162,21 +197,8 @@ final class StatsStore {
         update(deck: deck, at: date) { $0.insertPage(page) }
     }
 
-    func recordReply(deck: String, page: Int?, model: String?, kind: ReplyKind, usage: TokenUsage?, at date: Date) {
-        let tally = Self.tally(usage)
-        let key = StatsLog.key(for: date)
-        var day = log.days[key] ?? StatsDay()
-        var entry = day.decks[deck] ?? DeckDay()
-        switch kind {
-        case .explain: entry.explains += 1
-        case .question: entry.questions += 1
-        case .housekeeping: break
-        }
-        if let page { entry.insertPage(page) }
-        entry.tokens += tally
-        day.decks[deck] = entry
-        day.models[model ?? "", default: TokenTally()] += tally
-        log.days[key] = day
+    func recordReply(deck: String, page: Int?, model: String?, kind: ReplyKind, task: ModelTask, usage: TokenUsage?, at date: Date) {
+        log.addReply(deck: deck, page: page, model: model, kind: kind, task: task, usage: usage, at: date)
         scheduleSave()
     }
 
@@ -194,18 +216,6 @@ final class StatsStore {
         day.decks[deck] = entry
         log.days[key] = day
         scheduleSave()
-    }
-
-    nonisolated private static func tally(_ usage: TokenUsage?) -> TokenTally {
-        var tally = TokenTally()
-        tally.requests = 1
-        if let usage {
-            tally.prompt = usage.prompt
-            tally.completion = usage.completion
-            tally.cacheHit = usage.cacheHit ?? 0
-            tally.cacheWrite = usage.cacheWrite ?? 0
-        }
-        return tally
     }
 
     // MARK: - 保存
@@ -265,7 +275,7 @@ final class StatsStore {
                 var entry = day.decks[thread.sourcePath] ?? DeckDay()
                 if question.explainsPage != nil { entry.explains += 1 } else { entry.questions += 1 }
                 if let page = question.page { entry.insertPage(page) }
-                let tally = tally(reply.usage)
+                let tally = StatsLog.tally(reply.usage)
                 entry.tokens += tally
                 day.decks[thread.sourcePath] = entry
                 day.models[reply.model ?? "", default: TokenTally()] += tally

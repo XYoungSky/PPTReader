@@ -208,7 +208,7 @@ final class ChatController {
         let questionID = messages[questionIndex].id
         // 截图取提问时所在的页（重新生成时读者可能已经翻到别处）
         let page = messages[questionIndex].page ?? reader.currentPage
-        let config = settings.connection
+        let config = settings.connection(for: auto ? .autoExplain : .chat)
 
         var reply = ChatMessage(role: .assistant, content: "")
         reply.model = config.model
@@ -255,7 +255,7 @@ final class ChatController {
         // 框选的提问只附框内截图（整页的文字已在系统提示里）；重新生成时按保存的框重新渲染
         let region = messages.first(where: { $0.id == questionID })?.region
         var image: Data?
-        if attempt.withImage, settings.sendsImages {
+        if attempt.withImage, settings.sendsImages(config.model) {
             image = if let region { await reader.regionImage(region) } else { await reader.pageImage(page) }
         }
         try Task.checkCancellation()
@@ -292,7 +292,7 @@ final class ChatController {
     private func makeContext(_ reader: ReaderModel, config: ConnectionConfig, image: Data?, budgetScale: Double = 1) -> PromptBuilder.Context {
         let tokenScale = settings.quirks(config.providerID, config.model).tokenScale ?? 1
         // 估算偏低的模型按校准系数缩小预算，让实际用量仍落在设置的比例内
-        let budget = Int(Double(settings.contextTokenBudget) * budgetScale / tokenScale)
+        let budget = Int(Double(settings.contextTokenBudget(config.providerID, config.model)) * budgetScale / tokenScale)
         var context = PromptBuilder.Context(
             title: reader.title,
             pageCount: reader.pageCount,
@@ -345,7 +345,9 @@ final class ChatController {
     // MARK: - 学习记录
 
     /// 如果下一次请求会丢掉较早的对话，就在后台把它们整理成学习记录。
-    /// - Parameter end: 参与判断的消息到这里为止（不含）；默认为全部消息。
+    /// - Parameters:
+    ///   - end: 参与判断的消息到这里为止（不含）；默认为全部消息。
+    ///   - config: 讲解请求的连接。丢掉哪些消息按它的预算判断，因为丢掉的是聊天的历史；整理本身用“整理学习记录”任务的模型。
     private func startRecordIfNeeded(end: Int? = nil, config: ConnectionConfig) {
         guard settings.compactHistory, recordTask == nil, let reader, let thread else { return }
         let end = end ?? messages.count
@@ -356,10 +358,13 @@ final class ChatController {
         guard let last = PromptBuilder.lastDroppedMessage(past: past, context: context),
               last.id != recordFailedThrough else { return }
         let covered = (record?.messageCount ?? 0) + (past.firstIndex { $0.id == last.id }.map { $0 + 1 } ?? past.count)
-        // 和聊天请求共用前缀（同一个 makeContext）和缓存键，整理时课件部分能命中缓存
-        let request = PromptBuilder.recordRequest(past: past, context: context)
-        guard let task = try? LLMTask(config: config, messages: request.messages,
-                                      quirks: settings.quirks(config.providerID, config.model), cacheKey: cacheKey) else { return }
+        // 和讲解用同一个模型时，共用前缀（同一个 makeContext）和缓存键，课件部分能命中缓存；
+        // 换了模型缓存本来就命中不了，不带课件全文
+        let recordConfig = settings.connection(for: .record)
+        let sameModel = recordConfig.providerID == config.providerID && recordConfig.model == config.model
+        let request = PromptBuilder.recordRequest(past: past, context: context, includeCourseware: sameModel)
+        guard let task = try? LLMTask(config: recordConfig, messages: request.messages,
+                                      quirks: settings.quirks(recordConfig.providerID, recordConfig.model), cacheKey: cacheKey) else { return }
 
         isRecording = true
         let source = thread.sourcePath
@@ -369,7 +374,7 @@ final class ChatController {
         recordTask = Task { [weak self] in
             let result: Result<LLMTask.Output, Error>
             do {
-                result = .success(try await task.run(stats: stats, deck: source))
+                result = .success(try await task.run(stats: stats, deck: source, task: .record))
             } catch {
                 result = .failure(error)
             }
@@ -509,6 +514,7 @@ final class ChatController {
         let question = messages[index - 1]
         stats.recordReply(deck: thread.sourcePath, page: question.page, model: reply.model,
                           kind: question.explainsPage != nil ? .explain : .question,
+                          task: question.isAuto ? .autoExplain : .chat,
                           usage: reply.usage, at: reply.createdAt)
     }
 
@@ -521,7 +527,7 @@ final class ChatController {
             guard !Task.isCancelled, let self, self.settings.autoExplain, let reader = self.reader else { return }
             let page = reader.currentPage
             let alreadyExplained = self.messages.contains { $0.explainsPage == page }
-            guard !alreadyExplained, self.settings.hasAPIKey else { return }
+            guard !alreadyExplained, self.settings.canRequest(.autoExplain) else { return }
             if self.isStreaming && !self.streamIsAuto { return }
             self.perform(.explainPage(auto: true))
         }

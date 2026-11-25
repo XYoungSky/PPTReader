@@ -58,6 +58,13 @@ struct StatsSummary {
         var id: String { name }
     }
 
+    struct TaskRow: Identifiable {
+        let task: ModelTask
+        var tally = TokenTally()
+
+        var id: ModelTask { task }
+    }
+
     let period: Period
     let unit: Unit
     private(set) var buckets: [Bucket] = []
@@ -70,6 +77,10 @@ struct StatsSummary {
     private(set) var streak = 0
     private(set) var decks: [DeckRow] = []
     private(set) var models: [ModelRow] = []
+    /// 按任务的用量（1.9 起记录）。
+    private(set) var tasks: [TaskRow] = []
+    /// 范围内有 1.9 之前的用量（没有按任务记录），任务用量只是其中一部分。
+    private(set) var tasksPartial = false
 
     var interactions: Int { explains + questions }
     var hasActivity: Bool { seconds > 0 || interactions > 0 || pagesViewed > 0 }
@@ -106,6 +117,7 @@ struct StatsSummary {
 
         var deckRows: [String: DeckRow] = [:]
         var modelRows: [String: TokenTally] = [:]
+        var taskRows: [ModelTask: TokenTally] = [:]
         var pageSet = Set<String>()
         for (date, day) in parsed where date >= start && date <= today {
             if Self.isActive(day) { activeDays += 1 }
@@ -131,6 +143,10 @@ struct StatsSummary {
                 deckRows[path] = row
             }
             for (name, tally) in day.models { modelRows[name, default: TokenTally()] += tally }
+            for (key, tally) in day.tasks {
+                if let task = ModelTask(rawValue: key) { taskRows[task, default: TokenTally()] += tally }
+            }
+            if day.tasks.isEmpty, day.models.values.contains(where: { $0.requests > 0 }) { tasksPartial = true }
         }
         pagesViewed = pageSet.count
         decks = deckRows.values
@@ -139,6 +155,9 @@ struct StatsSummary {
         models = modelRows.filter { $0.value.requests > 0 }
             .map { ModelRow(name: $0.key, tally: $0.value) }
             .sorted { ($0.tally.total, $0.tally.requests) > ($1.tally.total, $1.tally.requests) }
+        tasks = ModelTask.allCases.compactMap { task in
+            taskRows[task].flatMap { $0.requests > 0 ? TaskRow(task: task, tally: $0) : nil }
+        }
 
         // 连续学习天数：今天还没学也不中断，从昨天往前数
         let activeKeys = Set(log.days.filter { Self.isActive($0.value) }.map(\.key))

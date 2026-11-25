@@ -37,6 +37,7 @@ final class AppSettings {
     private enum Key {
         static let providers = "api.providers"
         static let activeProvider = "api.activeProvider"
+        static let taskModels = "api.taskModels"
         // 以下 5 项是旧版本的单一配置，只在首次启动新版本时用来迁移
         static let baseURL = "api.baseURL"
         static let model = "api.model"
@@ -68,6 +69,10 @@ final class AppSettings {
     /// 保存的服务商（1…maxProviders 个），其中 `activeProviderID` 是正在使用的那个。
     private(set) var providers: [APIProvider] { didSet { saveProviders() } }
     var activeProviderID: UUID { didSet { defaults.set(activeProviderID.uuidString, forKey: Key.activeProvider) } }
+    /// 单独选了模型的任务；不在这里的任务跟随“讲解与提问”。
+    private(set) var taskModels: [ModelTask: ModelRef] { didSet { saveTaskModels() } }
+    /// 因为服务商被删除而改回跟随的任务 → 原来用的服务商名称。只在这次运行中提示，重新选择后清除。
+    private(set) var taskFallbacks: [ModelTask: String] = [:]
     var autoExplain: Bool { didSet { defaults.set(autoExplain, forKey: Key.autoExplain) } }
     var autoExplainDelay: Double { didSet { defaults.set(autoExplainDelay, forKey: Key.autoExplainDelay) } }
     var explanationStyle: ExplanationStyle {
@@ -122,6 +127,7 @@ final class AppSettings {
         let storedActive = defaults.string(forKey: Key.activeProvider).flatMap(UUID.init(uuidString:))
         providers = loaded
         activeProviderID = loaded.first { $0.id == storedActive }?.id ?? loaded[0].id
+        taskModels = Self.loadTaskModels(defaults, providers: loaded)
         autoExplain = defaults.bool(forKey: Key.autoExplain)
         autoExplainDelay = defaults.object(forKey: Key.autoExplainDelay) as? Double ?? 1.5
         explanationStyle = ExplanationStyle(
@@ -169,6 +175,24 @@ final class AppSettings {
         if let data = try? JSONEncoder().encode(providers) { defaults.set(data, forKey: Key.providers) }
     }
 
+    /// 按任务的原始值保存；认不出的任务（新版本加的）和已经不存在的服务商跳过。
+    private static func loadTaskModels(_ defaults: UserDefaults, providers: [APIProvider]) -> [ModelTask: ModelRef] {
+        guard let data = defaults.data(forKey: Key.taskModels),
+              let stored = try? JSONDecoder().decode([String: ModelRef].self, from: data) else { return [:] }
+        let ids = Set(providers.map(\.id))
+        var result: [ModelTask: ModelRef] = [:]
+        for (key, ref) in stored {
+            guard let task = ModelTask(rawValue: key), task.isConfigurable, ids.contains(ref.providerID) else { continue }
+            result[task] = ref
+        }
+        return result
+    }
+
+    private func saveTaskModels() {
+        let stored = Dictionary(uniqueKeysWithValues: taskModels.map { ($0.key.rawValue, $0.value) })
+        if let data = try? JSONEncoder().encode(stored) { defaults.set(data, forKey: Key.taskModels) }
+    }
+
     // MARK: - 服务商
 
     private var activeIndex: Int { providers.firstIndex { $0.id == activeProviderID } ?? 0 }
@@ -205,6 +229,11 @@ final class AppSettings {
         Keychain.write("", for: removed.keyAccount)
         keyCache[id] = nil
         if activeProviderID == id { activeProviderID = providers[min(index, providers.count - 1)].id }
+        // 用着这个服务商的任务改回跟随，并在设置里提示
+        for (task, ref) in taskModels where ref.providerID == id {
+            taskModels[task] = nil
+            taskFallbacks[task] = removed.name.isEmpty ? tr("未命名", "Untitled") : removed.name
+        }
     }
 
     /// 修改指定服务商（异步任务结束时用户可能已切换到别的服务商，因此按 ID 修改）。
@@ -236,7 +265,17 @@ final class AppSettings {
     // MARK: - API Key
 
     /// 当前服务商是否可以发请求：有 Key，或者是不需要 Key 的本机 / 局域网服务（Ollama、LM Studio 等）。
-    var hasAPIKey: Bool { activeProvider.hasKey || environmentKey != nil || OpenAIClient.isLocal(activeProvider.baseURL) }
+    var hasAPIKey: Bool { hasKey(for: activeProviderID) }
+
+    func hasKey(for id: UUID) -> Bool {
+        guard let provider = providers.first(where: { $0.id == id }) else { return false }
+        return provider.hasKey || environmentKey != nil || OpenAIClient.isLocal(provider.baseURL)
+    }
+
+    /// 这个任务用的服务商可以发请求。
+    func canRequest(_ task: ModelTask) -> Bool {
+        hasKey(for: resolved(task)?.provider.id ?? activeProviderID)
+    }
 
     /// 钥匙串中保存的 Key（设置页显示的就是它）。
     func storedKey(for id: UUID) -> String {
@@ -247,8 +286,10 @@ final class AppSettings {
         return key
     }
 
-    var apiKey: String {
-        let key = storedKey(for: activeProviderID)
+    var apiKey: String { apiKey(for: activeProviderID) }
+
+    func apiKey(for id: UUID) -> String {
+        let key = storedKey(for: id)
         return key.isEmpty ? (environmentKey ?? "") : key
     }
 
@@ -262,28 +303,41 @@ final class AppSettings {
 
     // MARK: - 模型
 
-    var modelChoices: [String] {
+    var modelChoices: [String] { modelChoices(for: activeProviderID, current: effectiveModel) }
+
+    /// 某个服务商的模型菜单：接口返回的列表加上正在用的模型。
+    func modelChoices(for id: UUID, current: String) -> [String] {
         var seen = Set<String>()
-        return (activeProvider.fetchedModels + [effectiveModel]).filter { !$0.isEmpty && seen.insert($0).inserted }
+        let fetched = providers.first { $0.id == id }?.fetchedModels ?? []
+        return (fetched + [current]).filter { !$0.isEmpty && seen.insert($0).inserted }
     }
+
+    var modelMenuChoices: [String] { modelMenuChoices(for: activeProviderID, current: effectiveModel) }
 
     /// 模型菜单里的顺序。模型多到要搜索时（如 OpenRouter 的几百个），当前模型和最近用过的排在前面，
     /// 不输入也能直接选到；其余靠输入名称搜索。模型少时保持原来的顺序。
-    var modelMenuChoices: [String] {
-        let all = modelChoices
+    func modelMenuChoices(for id: UUID, current: String) -> [String] {
+        let all = modelChoices(for: id, current: current)
         guard all.count > PopMenu.filterLimit else { return all }
         let available = Set(all)
         var seen = Set<String>()
-        let front = ([effectiveModel] + activeProvider.recentModels).filter { available.contains($0) && seen.insert($0).inserted }
+        let recent = providers.first { $0.id == id }?.recentModels ?? []
+        let front = ([current] + recent).filter { available.contains($0) && seen.insert($0).inserted }
         return front + all.filter { !seen.contains($0) }
     }
 
     /// 从模型菜单里选择模型，并记进最近使用。直接在输入框里改模型名不算（每输入一个字都会触发）。
     func chooseModel(_ name: String) {
         model = name
-        var recent = activeProvider.recentModels.filter { $0 != name }
-        recent.insert(name, at: 0)
-        activeProvider.recentModels = Array(recent.prefix(6))
+        noteRecentModel(name, for: activeProviderID)
+    }
+
+    private func noteRecentModel(_ name: String, for id: UUID) {
+        updateProvider(id) { provider in
+            var recent = provider.recentModels.filter { $0 != name }
+            recent.insert(name, at: 0)
+            provider.recentModels = Array(recent.prefix(6))
+        }
     }
 
     /// 实际请求使用的模型名，由用户填写或从接口返回的列表中选择。
@@ -291,8 +345,8 @@ final class AppSettings {
         model.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    /// 当前模型是否会收到页面截图。
-    var sendsImages: Bool { sendPageImage && !noVisionModels.contains(effectiveModel) }
+    /// 这个模型是否会收到页面截图。
+    func sendsImages(_ model: String) -> Bool { sendPageImage && !noVisionModels.contains(model) }
 
     func markNoVision(_ model: String) {
         if !model.isEmpty, !noVisionModels.contains(model) { noVisionModels.append(model) }
@@ -310,14 +364,55 @@ final class AppSettings {
     /// 当前服务商与模型的上下文窗口（token）：手动设置 > 接口报告 > 默认值。
     var contextWindow: Int { activeProvider.contextWindow ?? detectedContextWindow ?? Self.defaultContextWindow }
 
-    /// 一次请求（课件 + 历史 + 当前提问）最多使用的 token 数。
-    var contextTokenBudget: Int { Int(Double(contextWindow) * contextBudgetPercent) }
+    /// 当前服务商与模型一次请求（课件 + 历史 + 当前提问）最多使用的 token 数。
+    var contextTokenBudget: Int { contextTokenBudget(activeProviderID, effectiveModel) }
 
+    func contextTokenBudget(_ providerID: UUID, _ model: String) -> Int {
+        Int(Double(contextWindow(providerID, model)) * contextBudgetPercent)
+    }
+
+    /// “讲解与提问”的连接：正在使用的服务商和 AI 面板里选的模型。
     var connection: ConnectionConfig {
         let provider = activeProvider
-        return ConnectionConfig(providerID: provider.id, kind: provider.kind, baseURL: provider.baseURL, apiKey: apiKey,
-                                model: effectiveModel, thinking: provider.thinking, reasoningEffort: provider.reasoningEffort,
-                                longCache: provider.longCache)
+        return connection(provider, model: effectiveModel, thinking: provider.thinking, reasoningEffort: provider.reasoningEffort)
+    }
+
+    /// 某个任务的连接。没有单独选模型、选的服务商已不存在或没填模型时，跟随“讲解与提问”。
+    func connection(for task: ModelTask) -> ConnectionConfig {
+        guard let chosen = resolved(task) else { return connection }
+        let (provider, ref) = chosen
+        return connection(provider, model: ref.model.trimmingCharacters(in: .whitespacesAndNewlines),
+                          thinking: ref.thinking ?? provider.thinking,
+                          reasoningEffort: ref.reasoningEffort ?? provider.reasoningEffort)
+    }
+
+    /// 任务实际用的单独设置；跟随“讲解与提问”时为空。
+    private func resolved(_ task: ModelTask) -> (provider: APIProvider, ref: ModelRef)? {
+        guard let ref = taskModels[task], let provider = providers.first(where: { $0.id == ref.providerID }),
+              !ref.model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        return (provider, ref)
+    }
+
+    private func connection(_ provider: APIProvider, model: String, thinking: Bool, reasoningEffort: ReasoningEffort) -> ConnectionConfig {
+        ConnectionConfig(providerID: provider.id, kind: provider.kind, baseURL: provider.baseURL, apiKey: apiKey(for: provider.id),
+                         model: model, thinking: thinking, reasoningEffort: reasoningEffort, longCache: provider.longCache)
+    }
+
+    // MARK: - 按任务选择模型
+
+    /// 给任务单独选模型；传入空值改回跟随“讲解与提问”。
+    func setTaskModel(_ ref: ModelRef?, for task: ModelTask) {
+        guard task.isConfigurable else { return }
+        taskModels[task] = ref
+        taskFallbacks[task] = nil
+    }
+
+    /// 从模型菜单里给任务选模型，并记进那个服务商的最近使用。
+    func chooseTaskModel(_ name: String, for task: ModelTask) {
+        guard var ref = taskModels[task] else { return }
+        ref.model = name
+        setTaskModel(ref, for: task)
+        noteRecentModel(name, for: ref.providerID)
     }
 
     // MARK: - 学习档案

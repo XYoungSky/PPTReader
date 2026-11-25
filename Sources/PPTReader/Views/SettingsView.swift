@@ -178,7 +178,187 @@ private struct ModelSettings: View {
             // 切换服务商时重建编辑区，Key 输入框与测试结果随之重置
             ProviderEditor()
                 .id(settings.activeProviderID)
+            TaskModelSettings()
         }
+    }
+}
+
+/// 按任务选择模型：默认都跟随“讲解与提问”，也可以给某类任务单独选服务商、模型和思考参数。
+private struct TaskModelSettings: View {
+    var body: some View {
+        SettingsCard(title: tr("按任务选择模型", "Models by task"),
+                     footer: tr("默认都跟随“讲解与提问”，也就是上方正在使用的服务商和 AI 面板里选的模型。换成别的模型后，这个任务单独使用缓存，命中率会低一些。",
+                                "Every task follows Explain & ask by default: the provider in use above and the model chosen in the AI panel. A task on another model keeps its own cache, so it hits the cache less often.")) {
+            ForEach(ModelTask.allCases) { task in
+                TaskModelRow(task: task, last: task == ModelTask.allCases.last)
+            }
+        }
+    }
+}
+
+private struct TaskModelRow: View {
+    @Environment(AppSettings.self) private var settings
+    let task: ModelTask
+    /// 卡片里的最后一项：最后一行不画分隔线。
+    let last: Bool
+
+    var body: some View {
+        let ref = settings.taskModels[task]
+        let provider = ref.flatMap { ref in settings.providers.first { $0.id == ref.providerID } }
+        let warning = warning(ref, provider)
+        VStack(spacing: 0) {
+            SettingsRow(title: task.title, detail: task.strength.title + " · " + (warning ?? task.summary),
+                        detailColor: warning == nil ? Theme.text3 : Theme.danger, divider: !(last && provider == nil)) {
+                if task.isConfigurable {
+                    providerMenu(ref)
+                } else {
+                    Text(chatSummary)
+                        .font(.system(size: 12))
+                        .foregroundStyle(Theme.text2)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .frame(maxWidth: 260, alignment: .trailing)
+                }
+            }
+            if let ref, let provider {
+                let hasThinking = provider.kind.hasThinkingToggle || provider.kind.hasReasoningEffort
+                VStack(spacing: 0) {
+                    modelRow(ref, provider, divider: !(last && !hasThinking))
+                    if provider.kind.hasThinkingToggle {
+                        thinkingRow(ref, provider)
+                    } else if provider.kind.hasReasoningEffort {
+                        effortRow(ref, provider)
+                    }
+                }
+                .padding(.leading, 18)
+                .transition(.opacity)
+            }
+        }
+        .animation(Motion.content, value: ref)
+        .animation(Motion.content, value: warning)
+    }
+
+    private var chatSummary: String {
+        let model = settings.effectiveModel.isEmpty ? tr("未选择模型", "No model") : settings.effectiveModel
+        return settings.activeProvider.name + " · " + model
+    }
+
+    /// 设置里需要提醒的情况；没有时为空。
+    private func warning(_ ref: ModelRef?, _ provider: APIProvider?) -> String? {
+        if ref == nil, let removed = settings.taskFallbacks[task] {
+            return tr("“\(removed)”已删除，已改回跟随讲解与提问", "“\(removed)” was deleted, so this follows Explain & ask again")
+        }
+        guard let ref, let provider else { return nil }
+        if ref.model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return tr("没有填写模型，暂时跟随讲解与提问", "No model entered; following Explain & ask for now")
+        }
+        if !settings.hasKey(for: provider.id) {
+            return tr("“\(provider.name)”还没有设置 API Key", "“\(provider.name)” has no API key yet")
+        }
+        return nil
+    }
+
+    private func providerMenu(_ ref: ModelRef?) -> some View {
+        let current = ref.flatMap { ref in settings.providers.first { $0.id == ref.providerID } }
+        return PopMenuButton(trailing: true, style: OutlineButtonStyle()) {
+            var items = [PopMenuItem(tr("跟随讲解与提问", "Follow Explain & ask"), checked: ref == nil) {
+                settings.setTaskModel(nil, for: task)
+            }]
+            items.append(.separator)
+            items.append(.header(tr("单独选择服务商", "Use a provider")))
+            items += settings.providers.map { provider in
+                PopMenuItem(provider.name.isEmpty ? tr("未命名", "Untitled") : provider.name, checked: ref?.providerID == provider.id) {
+                    guard ref?.providerID != provider.id else { return }
+                    // 先填上这个服务商正在用的模型，再按需要换成轻量的
+                    let model = provider.model.trimmingCharacters(in: .whitespacesAndNewlines)
+                    settings.setTaskModel(ModelRef(providerID: provider.id, model: model), for: task)
+                }
+            }
+            return items
+        } label: {
+            HStack(spacing: 5) {
+                Text(current.map { $0.name.isEmpty ? tr("未命名", "Untitled") : $0.name } ?? tr("跟随讲解与提问", "Follow Explain & ask"))
+                    .lineLimit(1)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 8, weight: .bold))
+            }
+        }
+        .fixedSize()
+        .accessibilityLabel(task.title)
+    }
+
+    private func modelRow(_ ref: ModelRef, _ provider: APIProvider, divider: Bool) -> some View {
+        let choices = settings.modelMenuChoices(for: provider.id, current: ref.model.trimmingCharacters(in: .whitespacesAndNewlines))
+        let text = Binding(
+            get: { settings.taskModels[task]?.model ?? "" },
+            set: { value in
+                guard var ref = settings.taskModels[task] else { return }
+                ref.model = value
+                settings.setTaskModel(ref, for: task)
+            }
+        )
+        return SettingsRow(title: tr("模型", "Model"), divider: divider) {
+            HStack(spacing: 6) {
+                ThemedField(text: text, placeholder: tr("输入或选择模型", "Enter or choose a model"), monospaced: true)
+                PopMenuButton(trailing: true, style: IconButtonStyle(size: 30)) {
+                    choices.map { name in
+                        PopMenuItem(name, checked: name == ref.model, filterable: true) { settings.chooseTaskModel(name, for: task) }
+                    }
+                } label: {
+                    Label(tr("选择模型", "Choose model"), systemImage: "chevron.up.chevron.down")
+                }
+                .disabled(choices.isEmpty)
+            }
+            .frame(width: 300)
+        }
+    }
+
+    /// 深度思考（DeepSeek 类型）：跟随服务商，或者为这个任务单独开关。
+    private func thinkingRow(_ ref: ModelRef, _ provider: APIProvider) -> some View {
+        let follow = tr("跟随服务商", "Provider setting") + (provider.thinking ? tr("（开启）", " (on)") : tr("（关闭）", " (off)"))
+        let title = ref.thinking.map { $0 ? tr("开启", "On") : tr("关闭", "Off") } ?? follow
+        return SettingsRow(title: tr("深度思考", "Deep thinking"), divider: !last) {
+            optionMenu(title, items: [
+                PopMenuItem(follow, checked: ref.thinking == nil) { update { $0.thinking = nil } },
+                .separator,
+                PopMenuItem(tr("开启", "On"), checked: ref.thinking == true) { update { $0.thinking = true } },
+                PopMenuItem(tr("关闭", "Off"), checked: ref.thinking == false) { update { $0.thinking = false } },
+            ])
+        }
+    }
+
+    /// 思考强度（Kimi Code、OpenRouter 类型）：跟随服务商，或者为这个任务单独选。
+    private func effortRow(_ ref: ModelRef, _ provider: APIProvider) -> some View {
+        let options = provider.kind.reasoningEfforts
+        // 改过接口类型后，保存的值可能不在选项里，显示为“默认”（请求里也不会发送）
+        func shown(_ effort: ReasoningEffort) -> ReasoningEffort { options.contains(effort) ? effort : .auto }
+        let follow = tr("跟随服务商", "Provider setting") + tr("（\(shown(provider.reasoningEffort).title)）", " (\(shown(provider.reasoningEffort).title))")
+        let title = ref.reasoningEffort.map { shown($0).title } ?? follow
+        return SettingsRow(title: tr("思考强度", "Thinking effort"), divider: !last) {
+            optionMenu(title, items: [PopMenuItem(follow, checked: ref.reasoningEffort == nil) { update { $0.reasoningEffort = nil } }, .separator]
+                + options.map { effort in
+                    PopMenuItem(effort.title, checked: ref.reasoningEffort.map(shown) == effort) { update { $0.reasoningEffort = effort } }
+                })
+        }
+    }
+
+    private func optionMenu(_ title: String, items: [PopMenuItem]) -> some View {
+        PopMenuButton(trailing: true, style: OutlineButtonStyle()) {
+            items
+        } label: {
+            HStack(spacing: 5) {
+                Text(title)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 8, weight: .bold))
+            }
+        }
+        .fixedSize()
+    }
+
+    private func update(_ change: (inout ModelRef) -> Void) {
+        guard var ref = settings.taskModels[task] else { return }
+        change(&ref)
+        settings.setTaskModel(ref, for: task)
     }
 }
 

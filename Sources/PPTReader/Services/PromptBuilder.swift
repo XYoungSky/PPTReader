@@ -262,8 +262,10 @@ enum PromptBuilder {
     }
 
     /// 整理学习记录的请求：和平常一样的系统提示（含旧记录）与历史，末尾追加整理指令。
-    static func recordRequest(past: [ChatMessage], context: Context) -> Request {
-        let system = systemPrompt(context)
+    /// - Parameter includeCourseware: 整理用的模型和聊天模型不同时传 false。换了模型缓存本来就命中不了，
+    ///   带课件全文只会多花钱，轻量模型的上下文窗口还可能放不下；这时系统提示只有课件标题和旧记录。
+    static func recordRequest(past: [ChatMessage], context: Context, includeCourseware: Bool = true) -> Request {
+        let system = includeCourseware ? systemPrompt(context) : recordSystemPrompt(context)
         var result: [[String: Any]] = [["role": "system", "content": system]]
         var estimate = TokenEstimate.of(system) + 4
         for message in validTurns(past) {
@@ -300,6 +302,13 @@ enum PromptBuilder {
             - anything left unfinished or promised for later.
             \(merge)Use a concise bulleted list of at most 400 words. Output only the record, with no introduction or closing, and ignore the explanation style above.
             """)
+    }
+
+    /// 不带课件全文的整理请求用的系统提示：课件标题、页数和旧记录。
+    private static func recordSystemPrompt(_ context: Context) -> String {
+        tr("学生正在学习课件《\(context.title)》（共 \(context.pageCount) 页），下面是你和学生到目前为止的辅导对话。这里没有附上课件的文字，讲到的页码和内容以对话里的为准。",
+           "A student is studying the slide deck \"\(context.title)\" (\(context.pageCount) pages). Below is the tutoring conversation with the student so far. The deck's text isn't included here; rely on the conversation for page numbers and content.")
+            + recordSection(context)
     }
 
     /// 系统提示末尾的学习记录。

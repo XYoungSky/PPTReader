@@ -47,12 +47,14 @@ struct LLMTask: Sendable {
         quirks.maxOutput == 0 ? nil : min(limit, quirks.maxOutput ?? limit)
     }
 
-    /// 发送请求，收集输出，并把用量计入统计。
-    /// - Parameter deck: 统计归到哪份课件（`ChatThread.sourcePath`）。
+    /// 发送请求，收集输出，并把用量计入统计（只计 token，不算提问次数）。
+    /// - Parameters:
+    ///   - deck: 统计归到哪份课件（`ChatThread.sourcePath`）。
+    ///   - task: 统计归到哪类任务。
     @MainActor
-    func run(stats: StatsStore, deck: String, kind: ReplyKind = .housekeeping) async throws -> Output {
+    func run(stats: StatsStore, deck: String, task: ModelTask) async throws -> Output {
         try await run(events: OpenAIClient.stream(config: config, body: body)) { usage in
-            stats.recordReply(deck: deck, page: nil, model: config.model, kind: kind, usage: usage, at: Date())
+            stats.recordReply(deck: deck, page: nil, model: config.model, kind: .housekeeping, task: task, usage: usage, at: Date())
         }
     }
 
