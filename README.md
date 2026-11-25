@@ -56,7 +56,12 @@ Any OpenAI-compatible API works. **Add Provider** offers these templates; keep u
 Requires macOS 26 or later; the first recording asks for microphone access.
 
 1. **Record**: click the microphone in the toolbar or press ⇧⌘R. A recording bar appears below the slides with the time and level; pause, stop or show live captions from it. Audio is saved in 5-minute segments, so an unexpected quit loses at most the segment being recorded. Recording stops after 3 hours by default, with a reminder 5 minutes before.
-2. **Transcribe**: each segment is transcribed on your Mac as soon as it's recorded. Choose the accent (US, UK, Australian and other English, or Mandarin) and the recognizer: Standard, or Dictation, which uses terms from the open deck.
+2. **Transcribe**: each segment is transcribed on your Mac as soon as it's recorded. Choose the accent (US, UK, Australian and other English, or Mandarin) and the recognizer:
+   - **Standard**: the system recognizer; fast.
+   - **Dictation**: uses terms from the open deck; best in quiet rooms close to the speaker.
+   - **Whisper**: OpenAI's open-source model, running on your Mac. Much more accurate with accents, distance or noise. Download the model (about 650 MB) in Settings → Lectures first; the first use takes a few minutes to prepare. A 15-minute lecture takes about 1–2 minutes.
+
+   Existing recordings can be transcribed again with another recognizer from ⋯ → Re-transcribe in the Lectures window.
 3. **Play back**: in the Lectures window (⌥⌘R, or the button at the bottom left of the sidebar), recordings are grouped by course code and searchable. The transcript follows playback; click any sentence to play from there.
 4. **Organize with AI**: one click runs three steps:
    1. decide which decks in the course folder the lecture covered (you confirm the list) and tag the recording with the course code (e.g. ADS205);
@@ -64,7 +69,9 @@ Requires macOS 26 or later; the first recording asks for microphone access.
    3. list what isn't on the slides (matched to slide pages) and the course arrangements.
 5. **See it on the slides**: points matched to a page appear in its margin; click one to jump to that moment of the recording. Export a copy of the PDF with these notes; the original file is never changed.
 
-Every tab (transcript, corrected, supplements, course arrangements) can be exported as text or Markdown. Recording options are in Settings → Lectures: language, recognizer, quality (about 46 or 90 MB for 3 hours), length limit, and the space recordings use.
+You can also import audio or video recorded on a phone or another device (Record → Import Audio…, or the button at the top left of the Lectures window); it is transcribed and organized the same way, and the original file is not changed.
+
+The transcript, corrected version, supplements and course arrangements can all be exported as text or Markdown. Recording options are in Settings → Lectures: language, recognizer, quality (about 46 or 90 MB for 3 hours), length limit, and the space recordings use.
 
 ## Shortcuts
 
@@ -102,7 +109,7 @@ Requires the Xcode Command Line Tools (`xcode-select --install`).
 
 ```bash
 ./scripts/build-app.sh            # → build/Products.noindex/PPTReader.app
-./scripts/build-app.sh --install  # also copy to /Applications
+./scripts/build-app.sh --install  # install straight to /Applications
 ./scripts/test.sh                 # run the tests
 ```
 
