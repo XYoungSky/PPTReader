@@ -134,11 +134,15 @@ struct StatsView: View {
 
     private func tiles(_ summary: StatsSummary) -> some View {
         let tokens = summary.tokens
+        // 有花费时放在最前面，缓存写入量就不显示了，免得一行放不下
+        let cost = tokens.cost > 0 ? StatsFormat.money(tokens.cost) : nil
         let tokenCaption: String = if tokens.prompt > 0 && tokens.cacheHit > 0 {
-            tr("缓存命中 ", "Cache hit ") + StatsFormat.percent(Double(tokens.cacheHit) / Double(tokens.prompt))
-                + (tokens.cacheWrite > 0 ? tr(" · 写入 ", " · wrote ") + StatsFormat.compact(tokens.cacheWrite) : "")
+            (cost.map { $0 + " · " } ?? "")
+                + tr("缓存命中 ", "Cache hit ") + StatsFormat.percent(Double(tokens.cacheHit) / Double(tokens.prompt))
+                + (cost == nil && tokens.cacheWrite > 0 ? tr(" · 写入 ", " · wrote ") + StatsFormat.compact(tokens.cacheWrite) : "")
         } else if tokens.requests > 0 {
-            tr("\(tokens.requests) 次请求", tokens.requests == 1 ? "1 request" : "\(tokens.requests) requests")
+            (cost.map { $0 + " · " } ?? "")
+                + tr("\(tokens.requests) 次请求", tokens.requests == 1 ? "1 request" : "\(tokens.requests) requests")
         } else {
             " "
         }
@@ -151,7 +155,9 @@ struct StatsView: View {
             StatTile(label: tr("讲解与提问", "Questions"), value: StatsFormat.compact(summary.interactions),
                      caption: tr("讲解 \(summary.explains) · 提问 \(summary.questions)", "\(summary.explains) explain · \(summary.questions) ask"))
             StatTile(label: tr("Token 用量", "Tokens"), value: StatsFormat.compact(tokens.total), caption: tokenCaption)
-                .help(tr("输入 ", "Input ") + StatsFormat.compact(tokens.prompt) + " · " + tr("输出 ", "Output ") + StatsFormat.compact(tokens.completion))
+                .help(tr("输入 ", "Input ") + StatsFormat.compact(tokens.prompt) + " · " + tr("输出 ", "Output ") + StatsFormat.compact(tokens.completion)
+                      + (cost.map { tr("\n花费 ", "\nSpent ") + $0 + tr("：服务商报告的实际费用，只含报告了费用的请求（OpenRouter）",
+                                                                     ": as reported by the provider, only for requests that report it (OpenRouter)") } ?? ""))
         }
     }
 
@@ -797,7 +803,8 @@ private struct TaskList: View {
                     icon: row.task.icon,
                     title: row.task.title,
                     detail: StatsFormat.compact(row.tally.total) + tr(" Token · ", " tokens · ")
-                        + tr("\(row.tally.requests) 次", row.tally.requests == 1 ? "1 request" : "\(row.tally.requests) requests"),
+                        + tr("\(row.tally.requests) 次", row.tally.requests == 1 ? "1 request" : "\(row.tally.requests) requests")
+                        + (row.tally.cost > 0 ? " · " + StatsFormat.money(row.tally.cost) : ""),
                     fraction: peak > 0 ? Double(row.tally.total) / peak : 0,
                     help: tr("输入 ", "Input ") + StatsFormat.compact(row.tally.prompt) + " · "
                         + tr("输出 ", "Output ") + StatsFormat.compact(row.tally.completion),
@@ -826,7 +833,8 @@ private struct ModelList: View {
                     icon: "cpu",
                     title: row.name.isEmpty ? tr("未记录模型", "Unrecorded model") : row.name,
                     detail: StatsFormat.compact(row.tally.total) + tr(" Token · ", " tokens · ")
-                        + tr("\(row.tally.requests) 次", row.tally.requests == 1 ? "1 request" : "\(row.tally.requests) requests"),
+                        + tr("\(row.tally.requests) 次", row.tally.requests == 1 ? "1 request" : "\(row.tally.requests) requests")
+                        + (row.tally.cost > 0 ? " · " + StatsFormat.money(row.tally.cost) : ""),
                     fraction: peak > 0 ? Double(row.tally.total) / peak : 0,
                     help: tr("输入 ", "Input ") + StatsFormat.compact(row.tally.prompt) + " · "
                         + tr("输出 ", "Output ") + StatsFormat.compact(row.tally.completion),

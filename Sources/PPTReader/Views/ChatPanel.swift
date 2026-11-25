@@ -101,8 +101,11 @@ private struct ModelMenu: View {
                 }
             }
             // 模型很多时（OpenRouter）菜单可以打字搜索，当前模型和最近用过的排在前面
+            // 右侧的灰字是每百万 token 的输入 / 输出价格（模型列表报告了价格时才有）
+            let providerID = settings.activeProviderID
             items += settings.modelMenuChoices.map { name in
-                PopMenuItem(name, checked: name == settings.effectiveModel, filterable: true) { settings.chooseModel(name) }
+                PopMenuItem(name, shortcut: settings.priceLabel(providerID, name), checked: name == settings.effectiveModel,
+                            filterable: true) { settings.chooseModel(name) }
             }
             if !items.isEmpty { items.append(.separator) }
             items.append(PopMenuItem(tr("模型设置…", "Model Settings…"), icon: "gearshape") { SettingsWindow.show() })

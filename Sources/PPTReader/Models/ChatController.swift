@@ -255,7 +255,7 @@ final class ChatController {
         // 框选的提问只附框内截图（整页的文字已在系统提示里）；重新生成时按保存的框重新渲染
         let region = messages.first(where: { $0.id == questionID })?.region
         var image: Data?
-        if attempt.withImage, settings.sendsImages(config.model) {
+        if attempt.withImage, settings.sendsImages(config.providerID, config.model) {
             image = if let region { await reader.regionImage(region) } else { await reader.pageImage(page) }
         }
         try Task.checkCancellation()
@@ -276,7 +276,8 @@ final class ChatController {
             let window = settings.contextWindow(config.providerID, config.model)
             let input = Int(Double(built.estimatedTokens) * tokenScale) + (image == nil ? 0 : TokenEstimate.image)
             let room = window - input * 11 / 10 - 512
-            if room >= 1_024 { maxTokens = min(room, quirks.maxOutput ?? Self.defaultMaxOutput) }
+            let cap = settings.outputCap(config.providerID, config.model, limit: quirks.maxOutput ?? Self.defaultMaxOutput)
+            if room >= 1_024 { maxTokens = min(room, cap) }
         }
         let options = OpenAIClient.RequestOptions(maxTokens: maxTokens, omit: Set(quirks.omit), cacheKey: cacheKey)
         let body = try OpenAIClient.makeBody(config: config, messages: built.messages, options: options)
@@ -364,7 +365,9 @@ final class ChatController {
         let sameModel = recordConfig.providerID == config.providerID && recordConfig.model == config.model
         let request = PromptBuilder.recordRequest(past: past, context: context, includeCourseware: sameModel)
         guard let task = try? LLMTask(config: recordConfig, messages: request.messages,
-                                      quirks: settings.quirks(recordConfig.providerID, recordConfig.model), cacheKey: cacheKey) else { return }
+                                      quirks: settings.quirks(recordConfig.providerID, recordConfig.model),
+                                      maxOutput: settings.outputCap(recordConfig.providerID, recordConfig.model, limit: LLMTask.defaultMaxOutput),
+                                      cacheKey: cacheKey) else { return }
 
         isRecording = true
         let source = thread.sourcePath

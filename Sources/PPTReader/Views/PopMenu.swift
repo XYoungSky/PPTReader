@@ -11,6 +11,7 @@ struct PopMenuItem: Identifiable {
     var kind: Kind = .action
     var title = ""
     var icon: String?
+    /// 右侧的灰字：快捷键，或模型的价格。
     var shortcut: String?
     var checked = false
     var destructive = false
@@ -155,7 +156,8 @@ final class PopMenu {
     /// 可过滤的项多于这么多时，菜单可以打字搜索，并且只显示这么多项。
     static let filterLimit = 12
     /// 可搜索的菜单宽度固定，过滤时只变高度，不会左右跳动。
-    private static let searchableWidth: CGFloat = 340
+    /// 模型名加上右侧的价格也放得下。
+    private static let searchableWidth: CGFloat = 380
 
     private var panel: MenuPanel?
     private var model: PopMenuModel?

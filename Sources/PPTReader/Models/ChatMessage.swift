@@ -11,6 +11,8 @@ struct TokenUsage: Codable, Equatable {
     var cacheHit: Int?
     /// 这次写入缓存的输入 token（Kimi 等单独报告写入的服务商才有）。
     var cacheWrite: Int?
+    /// 服务商报告的实际花费（OpenRouter 的 usage.cost，单位是 credits，按美元计价）。
+    var cost: Double?
 }
 
 struct ChatMessage: Codable, Identifiable, Equatable {

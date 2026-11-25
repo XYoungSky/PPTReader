@@ -302,7 +302,8 @@ private struct TaskModelRow: View {
                 ThemedField(text: text, placeholder: tr("输入或选择模型", "Enter or choose a model"), monospaced: true)
                 PopMenuButton(trailing: true, style: IconButtonStyle(size: 30)) {
                     choices.map { name in
-                        PopMenuItem(name, checked: name == ref.model, filterable: true) { settings.chooseTaskModel(name, for: task) }
+                        PopMenuItem(name, shortcut: settings.priceLabel(provider.id, name), checked: name == ref.model,
+                                    filterable: true) { settings.chooseTaskModel(name, for: task) }
                     }
                 } label: {
                     Label(tr("选择模型", "Choose model"), systemImage: "chevron.up.chevron.down")
@@ -521,7 +522,8 @@ private struct ProviderEditor: View {
                         ThemedField(text: $settings.model, placeholder: tr("输入或选择模型", "Enter or choose a model"), monospaced: true)
                         PopMenuButton(trailing: true, style: IconButtonStyle(size: 30)) {
                             settings.modelMenuChoices.map { name in
-                                PopMenuItem(name, checked: name == settings.effectiveModel, filterable: true) { settings.chooseModel(name) }
+                                PopMenuItem(name, shortcut: settings.priceLabel(providerID, name), checked: name == settings.effectiveModel,
+                                            filterable: true) { settings.chooseModel(name) }
                             }
                         } label: {
                             Label(tr("选择模型", "Choose model"), systemImage: "chevron.up.chevron.down")
@@ -553,6 +555,15 @@ private struct ProviderEditor: View {
                 if settings.activeProvider.kind.hasReasoningEffort {
                     ReasoningEffortRow()
                 }
+                if settings.activeProvider.kind.hasPrivacyRouting {
+                    SettingsRow(title: tr("隐私", "Privacy"),
+                                detail: tr("只用不收集数据、或零数据保留的上游；限制越多可用的上游越少，有的模型可能会没有上游可用",
+                                           "Use only providers that don't collect data, or zero-retention endpoints. The stricter it is, the fewer providers qualify, and some models may have none")) {
+                        SegmentedPicker(selection: $settings.activeProvider.privacy,
+                                        options: ProviderPrivacy.allCases.map { ($0, $0.title) })
+                            .accessibilityLabel(tr("隐私", "Privacy"))
+                    }
+                }
                 let notes = settings.detectionNotes
                 if !notes.isEmpty {
                     SettingsRow(title: tr("自动检测到的限制", "Detected limits"),
@@ -578,8 +589,8 @@ private struct ProviderEditor: View {
             tr("Kimi Code 会员订阅的 API Key 在 Kimi Code 控制台创建；海外账号请把地址改为 https://api.kimi.ai/coding/v1。会员权益面向编程场景，如果请求被拒绝，可以改用 Kimi 开放平台。",
                "Create the key in the Kimi Code console. For international accounts, use https://api.kimi.ai/coding/v1. Membership benefits are meant for coding; if requests are refused, use the Kimi Platform instead.")
         case .openRouter:
-            tr("API Key 在 openrouter.ai/settings/keys 创建。模型名带服务商前缀，例如 anthropic/…、openai/…、deepseek/…；测试连接后，在模型菜单里直接输入名称即可搜索。",
-               "Create a key at openrouter.ai/settings/keys. Model names carry a provider prefix such as anthropic/…, openai/… or deepseek/…. After testing the connection, type in the model menu to search.")
+            tr("API Key 在 openrouter.ai/settings/keys 创建。模型名带服务商前缀，例如 anthropic/…、openai/…、deepseek/…；测试连接后，在模型菜单里直接输入名称即可搜索，右侧是每百万 token 的输入 / 输出价格（美元）。",
+               "Create a key at openrouter.ai/settings/keys. Model names carry a provider prefix such as anthropic/…, openai/… or deepseek/…. After testing the connection, type in the model menu to search; the right side shows input / output prices in USD per million tokens.")
         default:
             nil
         }
@@ -616,12 +627,13 @@ private struct ProviderEditor: View {
         withAnimation(Motion.content) { testState = .testing }
         do {
             switch try await OpenAIClient.testConnection(config: settings.connection) {
-            case .models(let models, let windows):
+            case .models(let list):
                 settings.updateProvider(providerID) {
-                    $0.fetchedModels = models
-                    $0.detectedContextWindows = windows
+                    $0.fetchedModels = list.names
+                    $0.detectedContextWindows = list.windows
+                    $0.modelInfo = list.infos
                 }
-                withAnimation(Motion.content) { testState = .success(models.count) }
+                withAnimation(Motion.content) { testState = .success(list.names.count) }
             case .reachable:
                 withAnimation(Motion.content) { testState = .reachable }
             }

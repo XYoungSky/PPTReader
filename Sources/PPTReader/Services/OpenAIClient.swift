@@ -114,10 +114,17 @@ enum RequestProblem: Equatable {
 
 /// 测试连接的结果。
 enum ConnectionCheck {
-    /// 接口返回了模型列表，以及其中报告了上下文窗口的模型。
-    case models([String], windows: [String: Int])
+    /// 接口返回了模型列表。
+    case models(ModelListing)
     /// 接口不提供模型列表，但用当前模型发送的请求成功了。
     case reachable
+}
+
+/// 接口返回的模型列表，以及其中报告了上下文窗口、元数据的模型。
+struct ModelListing {
+    var names: [String]
+    var windows: [String: Int] = [:]
+    var infos: [String: ModelInfo] = [:]
 }
 
 /// OpenAI 兼容的 Chat Completions 客户端（DeepSeek、Kimi、OpenAI、本地 Ollama 等均可）。
@@ -188,6 +195,11 @@ enum OpenAIClient {
             body[key] = value
             optional.append(key)
         }
+        // OpenRouter 上的 Claude 要显式标出缓存断点才会缓存。不是顶层参数，但模型不接受时也按名字记下、之后不再发
+        if config.needsCacheBreakpoints, !options.omit.contains("cache_control") {
+            body["messages"] = withCacheBreakpoints(messages)
+            optional.append("cache_control")
+        }
         add("stream_options", ["include_usage": true])
         if let maxTokens = options.maxTokens { body["max_tokens"] = maxTokens }
         // DeepSeek 用 thinking 参数开关深度思考（默认开启）；其他服务不认识这个参数，不发送
@@ -214,7 +226,43 @@ enum OpenAIClient {
         if let key = options.cacheKey, isOpenAI(config.baseURL) || config.kind == .openRouter {
             add("prompt_cache_key", key)
         }
+        // 隐私：只路由到不收集数据（或零数据保留）的上游。直接写进请求体、不列为可选参数：
+        // OpenRouter 的报错常带“Provider returned error”，列为可选参数会被误判成不接受 provider 而悄悄去掉
+        if config.kind.hasPrivacyRouting {
+            switch config.privacy {
+            case .any: break
+            case .noCollection: body["provider"] = ["data_collection": "deny"]
+            case .zeroRetention: body["provider"] = ["data_collection": "deny", "zdr": true] as [String: Any]
+            }
+        }
         return (try JSONSerialization.data(withJSONObject: body), optional)
+    }
+
+    /// 两个缓存断点（Claude 最多允许 4 个）：
+    /// - 系统提示末尾：课件部分对同一份课件逐字不变，历史按块丢弃、前缀变了也还能命中；
+    /// - 当轮提问之前的最后一条消息：下一轮请求的历史以这里为前缀。断点不放在当轮提问上，
+    ///   因为提问通常带截图，而历史里只有文字，写进缓存的截图下一轮用不上。
+    static func withCacheBreakpoints(_ messages: [[String: Any]]) -> [[String: Any]] {
+        var result = messages
+        var targets: [Int] = []
+        if result.first?["role"] as? String == "system" { targets.append(0) }
+        if result.count >= 3 { targets.append(result.count - 2) }
+        for index in targets {
+            result[index]["content"] = markedForCache(result[index]["content"])
+        }
+        return result
+    }
+
+    /// 内容改成分段数组，在最后一段文字上加 `cache_control`。
+    private static func markedForCache(_ content: Any?) -> Any? {
+        let marker: [String: Any] = ["type": "ephemeral"]
+        if let text = content as? String, !text.isEmpty {
+            return [["type": "text", "text": text, "cache_control": marker]]
+        }
+        guard var parts = content as? [[String: Any]],
+              let last = parts.lastIndex(where: { $0["type"] as? String == "text" }) else { return content }
+        parts[last]["cache_control"] = marker
+        return parts
     }
 
     /// 还没收到任何输出时，限流、服务端临时故障和连接中断最多自动重试这么多次。
@@ -381,6 +429,12 @@ enum OpenAIClient {
                 hint = tr("OpenRouter 上暂时没有满足条件的服务商可以处理这个模型。可以换一个模型，或稍后再试。",
                           "No OpenRouter provider that meets the request's requirements is available for this model. Try another model, or try again later.")
             }
+            // 打开了隐私限制时，没有可用上游多半是因为它（文档没写这时的状态码，404 和 503 都提示）
+            if config.privacy != .any, status == 404 || isPermanent(status, data, config) {
+                hint = (hint.map { $0 + "\n" } ?? "")
+                    + tr("也可能是隐私限制（\(config.privacy.title)）下没有可用的上游，可以在设置里放宽。",
+                         "It may also be that no provider meets the privacy setting (\(config.privacy.title)); you can relax it in Settings.")
+            }
             if let hint { message = message.isEmpty ? hint : message + "\n" + hint }
         }
         return .http(status, message)
@@ -398,7 +452,7 @@ enum OpenAIClient {
         return (metadata?["error_type"] as? String) != "provider_overloaded"
     }
 
-    private static func parseUsage(_ json: [String: Any]) -> TokenUsage {
+    static func parseUsage(_ json: [String: Any]) -> TokenUsage {
         let cached = (json["prompt_cache_hit_tokens"] as? Int)
             ?? ((json["prompt_tokens_details"] as? [String: Any])?["cached_tokens"] as? Int)
             ?? (json["cached_tokens"] as? Int)
@@ -408,7 +462,9 @@ enum OpenAIClient {
             prompt: json["prompt_tokens"] as? Int ?? 0,
             completion: json["completion_tokens"] as? Int ?? 0,
             cacheHit: cached,
-            cacheWrite: written
+            cacheWrite: written,
+            // OpenRouter 在 usage 里报告实际花费
+            cost: (json["cost"] as? NSNumber)?.doubleValue
         )
     }
 
@@ -429,19 +485,47 @@ enum OpenAIClient {
     }
 
     /// 获取模型列表，同时用来测试连接是否可用。
-    static func listModels(config: ConnectionConfig) async throws -> (names: [String], windows: [String: Int]) {
+    static func listModels(config: ConnectionConfig) async throws -> ModelListing {
         var request = try request(config, path: "models")
         request.timeoutInterval = 20
         let (data, response) = try await session.data(for: request)
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard (200..<300).contains(status) else { throw httpError(status, data, config) }
         let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
-        let entries = json?["data"] as? [[String: Any]] ?? []
-        var windows: [String: Int] = [:]
+        return parseModels(json?["data"] as? [[String: Any]] ?? [])
+    }
+
+    static func parseModels(_ entries: [[String: Any]]) -> ModelListing {
+        var list = ModelListing(names: entries.compactMap { $0["id"] as? String }.sorted())
         for entry in entries {
-            if let id = entry["id"] as? String, let window = contextWindow(in: entry) { windows[id] = window }
+            guard let id = entry["id"] as? String else { continue }
+            if let window = contextWindow(in: entry) { list.windows[id] = window }
+            if let info = modelInfo(in: entry) { list.infos[id] = info }
         }
-        return (entries.compactMap { $0["id"] as? String }.sorted(), windows)
+        return list
+    }
+
+    /// OpenRouter 模型列表里的元数据：输入模态、最大输出、价格（美元 / token，字符串）。
+    /// 价格为负（如 openrouter/auto 这类按实际路由计价的模型）时不显示。
+    static func modelInfo(in entry: [String: Any]) -> ModelInfo? {
+        var info = ModelInfo()
+        if let modalities = (entry["architecture"] as? [String: Any])?["input_modalities"] as? [String] {
+            info.acceptsImages = modalities.contains("image")
+        }
+        if let max = ((entry["top_provider"] as? [String: Any])?["max_completion_tokens"] as? NSNumber)?.intValue, max >= 256 {
+            info.maxOutput = max
+        }
+        if let pricing = entry["pricing"] as? [String: Any],
+           let prompt = number(pricing["prompt"]), let completion = number(pricing["completion"]),
+           prompt >= 0, completion >= 0 {
+            info.price = ModelPrice(prompt: prompt, completion: completion, cacheRead: number(pricing["input_cache_read"]))
+        }
+        return info == ModelInfo() ? nil : info
+    }
+
+    private static func number(_ value: Any?) -> Double? {
+        if let text = value as? String { return Double(text) }
+        return (value as? NSNumber)?.doubleValue
     }
 
     /// 有些接口会在模型列表里报告上下文长度（OpenRouter、vLLM、部分国内服务商），字段名各不相同。
@@ -459,8 +543,7 @@ enum OpenAIClient {
     /// 测试连接：优先获取模型列表；接口不提供列表（404 / 405）时，用当前模型发一个极短的请求。
     static func testConnection(config: ConnectionConfig) async throws -> ConnectionCheck {
         do {
-            let list = try await listModels(config: config)
-            return .models(list.names, windows: list.windows)
+            return .models(try await listModels(config: config))
         } catch APIError.http(let code, _) where code == 404 || code == 405 {
             guard !config.model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw APIError.missingModel }
             try await ping(config: config)

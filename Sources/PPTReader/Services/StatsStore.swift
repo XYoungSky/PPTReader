@@ -8,6 +8,8 @@ struct TokenTally: Codable, Equatable {
     var completion = 0
     var cacheHit = 0
     var cacheWrite = 0
+    /// 服务商报告的实际花费（美元），只含报告了费用的请求（目前是 OpenRouter）。
+    var cost: Double = 0
 
     var total: Int { prompt + completion }
 
@@ -17,6 +19,7 @@ struct TokenTally: Codable, Equatable {
         lhs.completion += rhs.completion
         lhs.cacheHit += rhs.cacheHit
         lhs.cacheWrite += rhs.cacheWrite
+        lhs.cost += rhs.cost
     }
 
     init() {}
@@ -28,6 +31,7 @@ struct TokenTally: Codable, Equatable {
         completion = try c.decodeIfPresent(Int.self, forKey: .completion) ?? 0
         cacheHit = try c.decodeIfPresent(Int.self, forKey: .cacheHit) ?? 0
         cacheWrite = try c.decodeIfPresent(Int.self, forKey: .cacheWrite) ?? 0
+        cost = (try? c.decodeIfPresent(Double.self, forKey: .cost)) ?? 0
     }
 }
 
@@ -131,6 +135,7 @@ struct StatsLog: Codable, Equatable {
             tally.completion = usage.completion
             tally.cacheHit = usage.cacheHit ?? 0
             tally.cacheWrite = usage.cacheWrite ?? 0
+            tally.cost = usage.cost ?? 0
         }
         return tally
     }

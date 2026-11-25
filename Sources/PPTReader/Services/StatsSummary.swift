@@ -258,6 +258,14 @@ enum StatsFormat {
         "\(Int((value * 100).rounded()))%"
     }
 
+    /// 花费（美元）：$0.42 · $12.3 · $128；不到一美分显示 <$0.01。
+    static func money(_ value: Double) -> String {
+        if value > 0 && value < 0.01 { return "<$0.01" }
+        if value >= 100 { return "$" + String(Int(value.rounded())) }
+        if value >= 10 { return "$" + String(format: "%.1f", value) }
+        return "$" + String(format: "%.2f", value)
+    }
+
     /// 日期格式跟随界面语言，而不是系统语言。
     static var dateStyle: Date.FormatStyle {
         Date.FormatStyle(locale: Locale(identifier: Localizer.shared.isEnglish ? "en_US" : "zh_CN"))

@@ -13,6 +13,15 @@ struct ConnectionConfig: Sendable {
     var reasoningEffort: ReasoningEffort = .auto
     /// 缓存保留 1 小时（仅对支持的类型发送）。
     var longCache = false
+    /// 只用满足隐私要求的上游（仅对 OpenRouter 发送）。
+    var privacy: ProviderPrivacy = .any
+
+    /// 要在请求里显式标出缓存断点的模型：OpenRouter 上的 Claude（OpenAI、DeepSeek 等是自动缓存，不用标）。
+    var needsCacheBreakpoints: Bool {
+        guard kind == .openRouter else { return false }
+        let name = model.lowercased()
+        return name.hasPrefix("anthropic/") || name.hasPrefix("~anthropic/")
+    }
 
     /// 服务商的缓存大约能保留多久；为空表示较长（DeepSeek 为数小时到数天）或不清楚，界面上不提示过期。
     var cacheLifetime: TimeInterval? {
@@ -345,8 +354,25 @@ final class AppSettings {
         model.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    /// 这个模型是否会收到页面截图。
-    func sendsImages(_ model: String) -> Bool { sendPageImage && !noVisionModels.contains(model) }
+    /// 这个模型是否会收到页面截图：请求中拒绝过图片，或模型列表里说不支持图片时都不发。
+    func sendsImages(_ providerID: UUID, _ model: String) -> Bool {
+        sendPageImage && !noVisionModels.contains(model) && modelInfo(providerID, model)?.acceptsImages != false
+    }
+
+    /// 测试连接时模型列表里报告的元数据。
+    func modelInfo(_ providerID: UUID, _ model: String) -> ModelInfo? {
+        providers.first { $0.id == providerID }?.modelInfo[model]
+    }
+
+    /// max_tokens 最多发多少：`limit` 和模型列表报告的上限中较小的那个。
+    func outputCap(_ providerID: UUID, _ model: String, limit: Int) -> Int {
+        min(limit, modelInfo(providerID, model)?.maxOutput ?? limit)
+    }
+
+    /// 模型菜单右侧显示的价格（每百万 token 的输入 / 输出）；模型列表没有报告时为空。
+    func priceLabel(_ providerID: UUID, _ model: String) -> String? {
+        modelInfo(providerID, model)?.price?.label
+    }
 
     func markNoVision(_ model: String) {
         if !model.isEmpty, !noVisionModels.contains(model) { noVisionModels.append(model) }
@@ -395,7 +421,8 @@ final class AppSettings {
 
     private func connection(_ provider: APIProvider, model: String, thinking: Bool, reasoningEffort: ReasoningEffort) -> ConnectionConfig {
         ConnectionConfig(providerID: provider.id, kind: provider.kind, baseURL: provider.baseURL, apiKey: apiKey(for: provider.id),
-                         model: model, thinking: thinking, reasoningEffort: reasoningEffort, longCache: provider.longCache)
+                         model: model, thinking: thinking, reasoningEffort: reasoningEffort, longCache: provider.longCache,
+                         privacy: provider.privacy)
     }
 
     // MARK: - 按任务选择模型

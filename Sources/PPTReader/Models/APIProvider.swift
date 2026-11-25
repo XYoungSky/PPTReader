@@ -47,6 +47,10 @@ struct APIProvider: Codable, Identifiable, Equatable, Sendable {
     var longCache: Bool
     /// 最近从模型菜单里选过的模型（新的在前）。模型很多时（如 OpenRouter）排在菜单前面。
     var recentModels: [String]
+    /// 测试连接时模型列表里报告的元数据（能否识图、最大输出、价格），目前只有 OpenRouter 提供。
+    var modelInfo: [String: ModelInfo]
+    /// 只用满足隐私要求的上游（只对 OpenRouter 生效）。
+    var privacy: ProviderPrivacy
 
     init(id: UUID = UUID(), name: String, baseURL: String, model: String = "", kind: ProviderPreset? = nil, keyAccount: String? = nil) {
         self.id = id
@@ -56,6 +60,8 @@ struct APIProvider: Codable, Identifiable, Equatable, Sendable {
         modelQuirks = [:]
         longCache = true
         recentModels = []
+        modelInfo = [:]
+        privacy = .any
         self.model = model
         fetchedModels = []
         thinking = true
@@ -85,12 +91,64 @@ struct APIProvider: Codable, Identifiable, Equatable, Sendable {
         modelQuirks = (try? c.decodeIfPresent([String: ModelQuirks].self, forKey: .modelQuirks)) ?? [:]
         longCache = (try? c.decodeIfPresent(Bool.self, forKey: .longCache)) ?? true
         recentModels = (try? c.decodeIfPresent([String].self, forKey: .recentModels)) ?? []
+        modelInfo = (try? c.decodeIfPresent([String: ModelInfo].self, forKey: .modelInfo)) ?? [:]
+        privacy = (try? c.decodeIfPresent(ProviderPrivacy.self, forKey: .privacy)) ?? .any
     }
 
     /// 列表中显示的副标题：主机名 · 模型。
     var summary: String {
         let host = URL(string: baseURL.contains("://") ? baseURL : "https://" + baseURL)?.host ?? baseURL
         return [host, model.trimmingCharacters(in: .whitespacesAndNewlines)].filter { !$0.isEmpty }.joined(separator: " · ")
+    }
+}
+
+/// 模型列表里报告的模型元数据（OpenRouter 的 GET /models）。没报告的项为空。
+struct ModelInfo: Codable, Equatable, Sendable {
+    /// `architecture.input_modalities` 里有没有 image。
+    var acceptsImages: Bool?
+    /// `top_provider.max_completion_tokens`：max_tokens 的上限。
+    var maxOutput: Int?
+    var price: ModelPrice?
+}
+
+/// 模型单价（美元 / token）。
+struct ModelPrice: Codable, Equatable, Sendable {
+    var prompt: Double
+    var completion: Double
+    /// 缓存命中部分的输入单价。
+    var cacheRead: Double?
+
+    /// 模型菜单里显示的价格：每百万 token 的输入 / 输出价格，例如“$3 / $15”。
+    var label: String {
+        if prompt == 0 && completion == 0 { return tr("免费", "Free") }
+        return "$" + Self.perMillion(prompt) + " / $" + Self.perMillion(completion)
+    }
+
+    static func perMillion(_ perToken: Double) -> String {
+        let value = perToken * 1_000_000
+        if value > 0 && value < 0.01 { return "<0.01" }
+        var text = String(format: "%.2f", value)
+        while text.contains("."), text.hasSuffix("0") { text.removeLast() }
+        if text.hasSuffix(".") { text.removeLast() }
+        return text
+    }
+}
+
+/// OpenRouter 的隐私路由：限制越多，可用的上游越少。
+enum ProviderPrivacy: String, Codable, CaseIterable, Sendable {
+    /// 不限制。
+    case any
+    /// 只用不收集数据的上游（`provider.data_collection: "deny"`）。
+    case noCollection
+    /// 只用零数据保留的端点（`provider.zdr: true`）。
+    case zeroRetention
+
+    var title: String {
+        switch self {
+        case .any: tr("不限", "Any")
+        case .noCollection: tr("不收集数据", "No data collection")
+        case .zeroRetention: tr("零数据保留", "Zero retention")
+        }
     }
 }
 
@@ -130,6 +188,9 @@ enum ProviderPreset: String, Codable, CaseIterable, Identifiable, Sendable {
 
     /// 支持用 `prompt_cache_options` 设置缓存保留时长（Kimi 开放平台：5m / 1h）。
     var hasCacheTTL: Bool { self == .kimiPlatform }
+
+    /// 支持按隐私要求路由（OpenRouter 的 `provider.data_collection` / `provider.zdr`）。
+    var hasPrivacyRouting: Bool { self == .openRouter }
 
     var name: String {
         switch self {

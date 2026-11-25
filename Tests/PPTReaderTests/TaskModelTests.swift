@@ -143,15 +143,45 @@ struct TaskModelTests {
         }
     }
 
-    @Test("截图按模型判断")
+    @Test("截图按模型判断：拒绝过图片的、模型列表说不支持图片的都不发")
     func imagesPerModel() {
         withSettings { settings, _ in
+            let chat = settings.activeProviderID
             settings.sendPageImage = true
             settings.markNoVision("text-only")
-            #expect(!settings.sendsImages("text-only"))
-            #expect(settings.sendsImages("deepseek-chat"))
+            #expect(!settings.sendsImages(chat, "text-only"))
+            #expect(settings.sendsImages(chat, "deepseek-chat"))
+
+            let router = add(.openRouter, to: settings, model: "m") {
+                $0.modelInfo = ["deepseek/deepseek-v4": ModelInfo(acceptsImages: false), "openai/gpt": ModelInfo(acceptsImages: true)]
+            }
+            #expect(!settings.sendsImages(router.id, "deepseek/deepseek-v4"))
+            #expect(settings.sendsImages(router.id, "openai/gpt"))
+            // 列表里没有的模型照常发，出错时再记下
+            #expect(settings.sendsImages(router.id, "unknown/model"))
+
             settings.sendPageImage = false
-            #expect(!settings.sendsImages("deepseek-chat"))
+            #expect(!settings.sendsImages(chat, "deepseek-chat"))
+        }
+    }
+
+    @Test("max_tokens 不超过模型列表报告的上限")
+    func outputCap() {
+        withSettings { settings, _ in
+            let router = add(.openRouter, to: settings, model: "m") { $0.modelInfo = ["small": ModelInfo(maxOutput: 4_096)] }
+            #expect(settings.outputCap(router.id, "small", limit: 32_768) == 4_096)
+            #expect(settings.outputCap(router.id, "small", limit: 2_000) == 2_000)
+            #expect(settings.outputCap(router.id, "other", limit: 32_768) == 32_768)
+        }
+    }
+
+    @Test("连接带上服务商的隐私设置")
+    func privacyInConnection() {
+        withSettings { settings, _ in
+            let router = add(.openRouter, to: settings, model: "m") { $0.privacy = .zeroRetention }
+            settings.setTaskModel(ModelRef(providerID: router.id, model: "m"), for: .record)
+            #expect(settings.connection(for: .record).privacy == .zeroRetention)
+            #expect(settings.connection.privacy == .any)
         }
     }
 
