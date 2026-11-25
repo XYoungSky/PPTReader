@@ -61,6 +61,39 @@ struct RecordingsWindowTests {
         #expect(text == "第 4 章\n\n[0:00:02] Okay.\n[1:07:05] Long one.\n")
     }
 
+    @Test("导出纠正版：改过的句子换成纠正后的")
+    func correctedText() {
+        let lines = [TranscriptLine(segment: 1, start: 2, end: 4, text: "The colonel."),
+                     TranscriptLine(segment: 3, start: 5, end: 6, text: "Next.")]
+        let corrections = LectureOrganizer.Corrections(lines: [.init(segment: 1, start: 2, text: "The kernel.")], createdAt: Date())
+        #expect(RecordingsPayload.text(recording(), lines: lines, corrections: corrections)
+                == "第 4 章\n\n[0:00:02] The kernel.\n[0:05:05] Next.\n")
+    }
+
+    @Test("导出补充要点按课件和页分组（对不上页的放最后），课程安排按时间排")
+    func markdown() {
+        let items: [LectureOrganizer.Supplement] = [
+            .init(kind: .supplement, deck: "/c/04.pdf", page: 9, point: "B", quote: "", time: 50),
+            .init(kind: .supplement, deck: nil, page: nil, point: "C", quote: "q", time: 10),
+            .init(kind: .supplement, deck: "/c/04.pdf", page: 3, point: "A", quote: "", time: 90),
+            .init(kind: .arrangement, deck: nil, page: nil, point: "Exam on Friday", quote: "", time: 3700),
+            .init(kind: .arrangement, deck: "/c/04.pdf", page: 12, point: "Page 12 is on the exam", quote: "", time: 30),
+        ]
+        let supplements = RecordingsPayload.markdown(recording(), items: items, kind: .supplement)
+        let a = supplements.range(of: "**p.3**")!.lowerBound, b = supplements.range(of: "**p.9**")!.lowerBound
+        let off = supplements.range(of: "[0:00:10] C")!.lowerBound
+        #expect(supplements.hasPrefix("# 第 4 章 · ") && a < b && b < off)
+        #expect(supplements.contains("## 04\n") && supplements.contains("  > “q”"))
+        #expect(!supplements.contains("Exam"))
+
+        let arrangements = RecordingsPayload.markdown(recording(), items: items, kind: .arrangement)
+        let first = arrangements.range(of: "Page 12")!.lowerBound, second = arrangements.range(of: "Exam on Friday")!.lowerBound
+        #expect(first < second && arrangements.contains("[1:01:40] Exam on Friday"))
+        #expect(!arrangements.contains("**p."))
+        #expect(RecordingsPayload.markdown(recording(), items: [], kind: .arrangement).contains("（没有）") ||
+                RecordingsPayload.markdown(recording(), items: [], kind: .arrangement).contains("(none)"))
+    }
+
     @Test("回放时按顺序拼接分段，总长等于各段之和")
     func compose() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("PPTReaderTests-\(UUID().uuidString)")

@@ -93,13 +93,51 @@ enum RecordingsPayload {
     }
 
     /// 导出的纯文本转写：每段一行，前面是录音时间。
-    static func text(_ recording: Recording, lines: [TranscriptLine]) -> String {
+    /// - Parameter corrections: 给出时导出纠正版（改过的句子换成纠正后的）。
+    static func text(_ recording: Recording, lines: [TranscriptLine], corrections: LectureOrganizer.Corrections? = nil) -> String {
         var output = "\(recording.title)\n"
         for line in lines {
             guard let time = recording.time(segment: line.segment, at: line.start) else { continue }
-            output += "\n[\(clock(time))] \(line.text)"
+            let text = corrections?.text(segment: line.segment, start: line.start) ?? line.text
+            output += "\n[\(clock(time))] \(text)"
         }
         return output + "\n"
+    }
+
+    /// 导出补充要点或课程安排（Markdown）：补充要点按课件和页分组，课程安排按时间排。
+    static func markdown(_ recording: Recording, items: [LectureOrganizer.Supplement], kind: LectureOrganizer.Supplement.Kind) -> String {
+        let title = kind == .supplement ? tr("补充要点", "Supplements") : tr("课程安排", "Course arrangements")
+        var output = "# \(recording.title) · \(title)\n"
+        let chosen = items.filter { $0.kind == kind }
+        func entry(_ item: LectureOrganizer.Supplement, page: Bool) -> String {
+            var line = "- "
+            if page, let number = item.page { line += "**p.\(number)** " }
+            line += "[\(clock(item.time))] \(item.point)"
+            if !item.quote.isEmpty { line += "\n  > “\(item.quote)”" }
+            return line
+        }
+        if chosen.isEmpty { return output + "\n" + tr("（没有）", "(none)") + "\n" }
+        if kind == .arrangement {
+            for item in chosen.sorted(by: { $0.time < $1.time }) {
+                var line = entry(item, page: false)
+                if let deck = item.deck, let page = item.page {
+                    line += tr("（课件 \(URL(fileURLWithPath: deck).deletingPathExtension().lastPathComponent) 第 \(page) 页）",
+                               " (deck \(URL(fileURLWithPath: deck).deletingPathExtension().lastPathComponent), page \(page))")
+                }
+                output += "\n" + line
+            }
+            return output + "\n"
+        }
+        let groups = Dictionary(grouping: chosen) { $0.deck ?? "" }
+        for key in groups.keys.sorted(by: { ($0.isEmpty ? 1 : 0, $0) < ($1.isEmpty ? 1 : 0, $1) }) {
+            let heading = key.isEmpty ? tr("对不上课件的页", "Not tied to a slide") : URL(fileURLWithPath: key).deletingPathExtension().lastPathComponent
+            output += "\n## \(heading)\n"
+            for item in groups[key]!.sorted(by: { ($0.page ?? 0, $0.time) < ($1.page ?? 0, $1.time) }) {
+                output += "\n" + entry(item, page: true)
+            }
+            output += "\n"
+        }
+        return output
     }
 
     static func clock(_ seconds: Double) -> String {
@@ -258,7 +296,8 @@ final class RecordingsWindow: NSObject {
         case "editTags": if let id { editTags(id) }
         case "reveal": if let id { NSWorkspace.shared.activateFileViewerSelecting([store.folder(id)]) }
         case "exportAudio": if let id { exportAudio(id) }
-        case "exportText": if let id { exportText(id) }
+        case "exportText": if let id { exportTab(id, tab: "transcript") }
+        case "exportTab": if let id { exportTab(id, tab: dict["tab"] as? String ?? "transcript") }
         case "delete": if let id { delete(id) }
         default: break
         }
@@ -305,17 +344,40 @@ final class RecordingsWindow: NSObject {
         }
     }
 
-    private func exportText(_ id: String) {
+    /// 导出当前标签页：转写、纠正版是文本，补充要点、课程安排是 Markdown。
+    private func exportTab(_ id: String, tab: String) {
         guard let recording = store.load(id), let panel else { return }
+        let suffix: String
+        let content: () -> String?
+        switch tab {
+        case "corrected":
+            suffix = tr("纠正版", "Corrected") + ".txt"
+            content = { [store] in
+                store.corrections(id).map { RecordingsPayload.text(recording, lines: store.transcript(id), corrections: $0) }
+            }
+        case "supplements", "arrangements":
+            let kind: LectureOrganizer.Supplement.Kind = tab == "supplements" ? .supplement : .arrangement
+            suffix = (kind == .supplement ? tr("补充要点", "Supplements") : tr("课程安排", "Course arrangements")) + ".md"
+            content = { [store] in
+                store.organized(id).map { RecordingsPayload.markdown(recording, items: $0.supplements, kind: kind) }
+            }
+        default:
+            suffix = tr("转写", "Transcript") + ".txt"
+            content = { [store] in RecordingsPayload.text(recording, lines: store.transcript(id)) }
+        }
+        guard content() != nil else {
+            send("Recordings.toast", tr("还没有可以导出的内容，先点「AI 整理」", "Nothing to export yet; organize the lecture first"))
+            return
+        }
         let save = NSSavePanel()
-        save.nameFieldStringValue = recording.title + ".txt"
-        save.allowedContentTypes = [.plainText]
+        save.nameFieldStringValue = "\(recording.title) - \(suffix)"
+        save.allowedContentTypes = [suffix.hasSuffix(".md") ? UTType(filenameExtension: "md") ?? .plainText : .plainText]
         save.beginSheetModal(for: panel) { [weak self] response in
             MainActor.assumeIsolated {
-                guard response == .OK, let url = save.url, let self else { return }
-                let text = RecordingsPayload.text(recording, lines: self.store.transcript(id))
+                guard response == .OK, let url = save.url, let self, let text = content() else { return }
                 do {
                     try text.write(to: url, atomically: true, encoding: .utf8)
+                    self.send("Recordings.toast", tr("已导出", "Exported"))
                 } catch {
                     self.send("Recordings.toast", error.localizedDescription)
                 }

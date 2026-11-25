@@ -422,7 +422,7 @@ button.icon svg { width: 16px; height: 16px; }
 .tabs-row {
   display: flex;
   align-items: flex-end;
-  gap: 12px;
+  gap: 8px;
   margin-top: 14px;
 }
 
@@ -456,6 +456,8 @@ button.icon svg { width: 16px; height: 16px; }
   font-variant-numeric: tabular-nums;
   color: var(--muted);
 }
+
+#export { margin-bottom: 6px; }
 
 #search {
   display: flex;

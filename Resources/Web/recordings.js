@@ -10,7 +10,8 @@
 //   Recordings.setPlayback({time, playing, rate})
 //   Recordings.setLive({text, volatile})  正在录音时的实时字幕
 //   Recordings.toast(message)
-// 发回原生端：ready / select / play / pause / seek / rate / skip / organize / rename / reveal / exportAudio / exportText / delete
+// 发回原生端：ready / select / play / pause / seek / rate / organize / organizeConfirm / organizeCancel / openPage / rename / editTags
+//   / reveal / exportAudio / exportTab / delete
 (function () {
   'use strict';
 
@@ -29,6 +30,7 @@
     more: '<svg viewBox="0 0 16 16"><circle cx="3.5" cy="8" r=".6" fill="currentColor"/><circle cx="8" cy="8" r=".6" fill="currentColor"/><circle cx="12.5" cy="8" r=".6" fill="currentColor"/></svg>',
     sparkles: '<svg viewBox="0 0 16 16"><path d="M7 2.5 8.2 6 11.5 7.2 8.2 8.4 7 12 5.8 8.4 2.5 7.2 5.8 6z"/><path d="M12.2 10.3l.5 1.4 1.4.5-1.4.5-.5 1.4-.5-1.4-1.4-.5 1.4-.5z"/></svg>',
     check: '<svg viewBox="0 0 12 12"><path d="m2.5 6.3 2.3 2.2 4.7-5"/></svg>',
+    export: '<svg viewBox="0 0 16 16"><path d="M8 10V2.5M5 5.2 8 2.3l3 2.9"/><path d="M3.5 8.5v4a1 1 0 0 0 1 1h7a1 1 0 0 0 1-1v-4"/></svg>',
     mic: '<svg viewBox="0 0 20 20"><rect x="7.2" y="2.5" width="5.6" height="9.5" rx="2.8"/><path d="M4.5 9.5a5.5 5.5 0 0 0 11 0M10 15v2.5"/></svg>',
   };
 
@@ -183,6 +185,11 @@
     $('tabs').innerHTML = tabs.map(([key, label, count]) =>
       `<button type="button" role="tab" data-tab="${key}" class="${key === tab ? 'active' : ''}">${label}${count ? `<span class="count">${count}</span>` : ''}</button>`).join('');
     $('search').style.visibility = tab === 'transcript' || tab === 'corrected' ? 'visible' : 'hidden';
+    $('export').innerHTML = ICON.export;
+    const exportNames = { transcript: t('导出转写（文本）', 'Export transcript (text)'), corrected: t('导出纠正版（文本）', 'Export corrected transcript (text)'),
+      supplements: t('导出补充要点（Markdown）', 'Export supplements (Markdown)'), arrangements: t('导出课程安排（Markdown）', 'Export course arrangements (Markdown)') };
+    $('export').title = exportNames[tab];
+    $('export').setAttribute('aria-label', exportNames[tab]);
     $('search-input').placeholder = t('搜索转写', 'Search transcript');
     renderContent(keepScroll);
   }
@@ -636,7 +643,6 @@
       ['reveal', t('在访达中显示', 'Show in Finder')],
       null,
       ['exportAudio', t('导出音频（m4a）…', 'Export Audio (m4a)…')],
-      ['exportText', t('导出转写（文本）…', 'Export Transcript (Text)…')],
       null,
       ['delete', t('删除录音…', 'Delete Recording…'), 'danger'],
     ];
@@ -678,6 +684,11 @@
     $('forward').addEventListener('click', () => seek(playback.time + 15));
     $('rate').addEventListener('click', cycleRate);
     $('organize').addEventListener('click', organize);
+    $('export').addEventListener('click', () => {
+      if (!detail) return;
+      post({ type: 'exportTab', id: detail.id, tab });
+      if (!native) toast(t('（示例）', '(Demo) ') + $('export').title);
+    });
     $('more').addEventListener('click', (event) => { event.stopPropagation(); $('menu').hidden ? openMenu() : closeMenu(); });
     $('menu').addEventListener('click', (event) => {
       const action = event.target.closest('button') && event.target.closest('button').dataset.action;
