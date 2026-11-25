@@ -100,10 +100,23 @@ EOF
   export)
     file="${2:?用法：./scripts/signing.sh export <文件.p12>}"
     unlock >/dev/null || { echo "没有找到证书，先运行 ./scripts/signing.sh create" >&2; exit 1; }
-    read -rs "p12pw?给备份设一个密码：" && echo
+    [[ -t 0 ]] || { echo "要在“终端”App 里运行（需要输入密码）。" >&2; exit 1; }
+    echo "给这份备份设一个新密码（自己定，以后在另一台 Mac 上导入时要用；输入时不显示）。"
+    read -rs "p12pw?备份密码：" && echo
     read -rs "again?再输入一次：" && echo
+    [[ -n "$p12pw" ]] || { echo "密码不能为空" >&2; exit 1; }
     [[ "$p12pw" == "$again" ]] || { echo "两次输入的密码不一样" >&2; exit 1; }
-    security export -k "$KEYCHAIN" -t identities -f pkcs12 -P "$p12pw" -o "$file"
+    # 导出私钥时 macOS 一定会弹窗，要求输入签名钥匙串的密码。这个密码是 create 时随机生成的，
+    # 存在登录钥匙串里，这里复制到剪贴板，粘贴进弹窗即可。
+    password | tr -d '\n' | pbcopy
+    echo "接下来 macOS 会弹窗，要求输入“PPTReader-Signing”钥匙串的密码。"
+    echo "这个密码已经复制到剪贴板，在弹窗里按 ⌘V 粘贴，再点“允许”。"
+    if ! security export -k "$KEYCHAIN" -t identities -f pkcs12 -P "$p12pw" -o "$file"; then
+      printf '' | pbcopy
+      echo "导出失败（弹窗里点了拒绝，或者密码不对）。" >&2
+      exit 1
+    fi
+    printf '' | pbcopy
     chmod 600 "$file"
     echo "✅ 已导出到 $file。私钥在里面，不要放进项目目录或公开的地方。"
     ;;
