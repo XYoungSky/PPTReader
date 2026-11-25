@@ -189,8 +189,9 @@ private struct TaskModelSettings: View {
         SettingsCard(title: tr("按任务选择模型", "Models by task"),
                      footer: tr("默认都跟随“讲解与提问”，也就是上方正在使用的服务商和 AI 面板里选的模型。换成别的模型后，这个任务单独使用缓存，命中率会低一些。",
                                 "Every task follows Explain & ask by default: the provider in use above and the model chosen in the AI panel. A task on another model keeps its own cache, so it hits the cache less often.")) {
-            ForEach(ModelTask.allCases) { task in
-                TaskModelRow(task: task, last: task == ModelTask.allCases.last)
+            let tasks = ModelTask.allCases.filter(\.isAvailable)
+            ForEach(tasks) { task in
+                TaskModelRow(task: task, last: task == tasks.last)
             }
         }
     }

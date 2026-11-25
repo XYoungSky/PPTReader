@@ -33,6 +33,8 @@ final class AppModel {
     @ObservationIgnored private let store = ChatStore()
     @ObservationIgnored private let tracker: StudyTracker
     @ObservationIgnored private var loadTask: Task<Void, Never>?
+    /// 打开课件后跳到这一页（从课堂录音的补充要点打开时）。
+    @ObservationIgnored private var pendingPage: Int?
     @ObservationIgnored private static let lastFileKey = "library.lastFile"
 
     init() {
@@ -40,7 +42,7 @@ final class AppModel {
         chat.onChange = { RoadmapWindow.shared.progressDidChange() }
         tracker = StudyTracker(stats: stats)
         tracker.isBusy = { [weak chat] in chat?.isStreaming ?? false }
-        lectures = LectureController(settings: settings)
+        lectures = LectureController(settings: settings, stats: stats)
         lectures.context = { [weak self] in
             guard let self, let reader = self.reader else { return nil }
             return LectureController.Context(title: reader.title, coursePath: self.chat.course?.path,
@@ -124,8 +126,10 @@ final class AppModel {
                     throw ReaderError(tr("暂不支持有密码的 PDF。", "Password-protected PDFs aren't supported."))
                 }
                 let thread = self.store.load(for: url)
+                let initialPage = self.pendingPage ?? thread.lastPage ?? 1
+                self.pendingPage = nil
                 let reader = ReaderModel(sourceURL: url, pdfURL: pdfURL, kind: kind,
-                                         document: document, initialPage: thread.lastPage ?? 1)
+                                         document: document, initialPage: initialPage)
                 reader.onPageChange = { [weak self] page in
                     self?.chat.pageDidChange(page)
                     self?.tracker.pageViewed(page)
@@ -156,6 +160,17 @@ final class AppModel {
         } else {
             openFolder(url)
         }
+    }
+
+    /// 打开某份课件并跳到某页；已经打开时直接翻过去。
+    func open(deck url: URL, page: Int) {
+        if let reader, reader.sourceURL.standardizedFileURL == url.standardizedFileURL {
+            reader.pdf.go(to: page)
+            return
+        }
+        guard FileManager.default.fileExists(atPath: url.path), selectedFile?.standardizedFileURL != url.standardizedFileURL else { return }
+        pendingPage = page
+        openDeck(url)
     }
 
     func openInDefaultApp() {

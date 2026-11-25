@@ -83,6 +83,29 @@ struct RecordingsWindowTests {
         #expect(abs(Double(file.length) / file.fileFormat.sampleRate - 2.5) < 0.05)
     }
 
+    @Test("整理的进度和结果：选课件时标出录音时打开的那份，补充要点带课件名")
+    @MainActor
+    func organizePayload() throws {
+        let candidate = LectureOrganizer.Candidate(path: "/c/04.pdf", title: "04", folder: "L", head: "", readable: true)
+        let choosing = RecordingsPayload.organize(.choosing([.init(candidate: candidate, suggested: true, reason: "r")]), recordedDeck: "/c/04.pdf")
+        let deck = try #require((choosing["decks"] as? [[String: Any]])?.first)
+        #expect(choosing["stage"] as? String == "choosing")
+        #expect(deck["recorded"] as? Bool == true && deck["suggested"] as? Bool == true && deck["reason"] as? String == "r")
+        let running = RecordingsPayload.organize(.running(step: 2, message: "m", done: 1, total: 4), recordedDeck: nil)
+        #expect(running["step"] as? Int == 2 && running["total"] as? Int == 4)
+        #expect(RecordingsPayload.organize(.failed("x"), recordedDeck: nil)["message"] as? String == "x")
+        #expect(JSONSerialization.isValidJSONObject(choosing))
+
+        let result = LectureOrganizer.Result(decks: ["/c/04.pdf"], supplements: [
+            .init(deck: "/c/04.pdf", page: 3, point: "p", quote: "q", time: 12),
+            .init(deck: nil, page: nil, point: "off", quote: "", time: 30),
+        ], createdAt: Date())
+        let items = RecordingsPayload.supplements(result)
+        #expect(items[0]["deckTitle"] as? String == "04" && items[0]["page"] as? Int == 3 && items[0]["t"] as? Double == 12)
+        #expect(items[1]["deck"] == nil && items[1]["page"] == nil)
+        #expect(JSONSerialization.isValidJSONObject(items))
+    }
+
     @Test("快捷键：开始 / 停止录音 ⌘⇧R，课堂录音窗口 ⌥⌘R，不和别的冲突")
     func shortcuts() {
         let combos = ShortcutAction.allCases.compactMap(\.defaultCombo)

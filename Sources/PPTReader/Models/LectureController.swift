@@ -7,7 +7,7 @@ import Observation
 @MainActor
 @Observable
 final class LectureController {
-    static var isSupported: Bool {
+    nonisolated static var isSupported: Bool {
         if #available(macOS 26, *) { return true }
         return false
     }
@@ -55,17 +55,25 @@ final class LectureController {
     /// 开始录音失败、或录音中出错停下的原因。
     private(set) var problem: String?
 
+    /// 正在整理的录音（「AI 整理」）。
+    var organizing: [String: OrganizeState] = [:]
+
     @ObservationIgnored var context: () -> Context? = { nil }
-    @ObservationIgnored private let settings: AppSettings
-    @ObservationIgnored private let store: RecordingStore
+    @ObservationIgnored let settings: AppSettings
+    @ObservationIgnored let stats: StatsStore
+    @ObservationIgnored let store: RecordingStore
+    @ObservationIgnored var organizeTasks: [String: Task<Void, Never>] = [:]
+    /// 替换掉真正的模型调用（测试用）。
+    @ObservationIgnored var completion: ((ModelTask, [[String: Any]]) async throws -> LLMTask.Output)?
     @ObservationIgnored private var captioner: AnyObject?
     @ObservationIgnored private var hideSaved: Task<Void, Never>?
     @ObservationIgnored private static let captionsKey = "recording.showsCaptions"
 
     var isRecording: Bool { recorder.state != .idle }
 
-    init(settings: AppSettings, store: RecordingStore = .shared) {
+    init(settings: AppSettings, stats: StatsStore, store: RecordingStore = .shared) {
         self.settings = settings
+        self.stats = stats
         self.store = store
         recorder = LectureRecorder(store: store)
         transcription = TranscriptionQueue(store: store)

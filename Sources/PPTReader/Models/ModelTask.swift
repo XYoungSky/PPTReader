@@ -11,11 +11,25 @@ enum ModelTask: String, Codable, CaseIterable, Identifiable, Sendable {
     case record
     /// 读整份课件，生成学习路线图的大纲。
     case roadmap
+    /// 课堂录音整理第 1 步：判断这节课讲了课程文件夹里的哪几份课件。
+    case lectureDecks
+    /// 第 2 步：对照课件，找出老师讲了、课件上没有的补充要点。
+    case lectureSupplements
+    /// 第 3 步：整节课的笔记。
+    case lectureNotes
 
     var id: Self { self }
 
     /// 可以在设置里单独选模型（“讲解与提问”本身就是其他任务跟随的对象）。
     var isConfigurable: Bool { self != .chat }
+
+    /// 这台 Mac 上用得到（课堂录音的任务要 macOS 26+）。
+    var isAvailable: Bool {
+        switch self {
+        case .lectureDecks, .lectureSupplements, .lectureNotes: LectureController.isSupported
+        default: true
+        }
+    }
 
     /// 建议用多强的模型。
     enum Strength {
@@ -32,8 +46,8 @@ enum ModelTask: String, Codable, CaseIterable, Identifiable, Sendable {
 
     var strength: Strength {
         switch self {
-        case .chat, .autoExplain: .strong
-        case .record: .light
+        case .chat, .autoExplain, .lectureSupplements, .lectureNotes: .strong
+        case .record, .lectureDecks: .light
         case .roadmap: .medium
         }
     }
@@ -44,6 +58,9 @@ enum ModelTask: String, Codable, CaseIterable, Identifiable, Sendable {
         case .autoExplain: tr("翻页自动讲解", "Auto-explain on page turn")
         case .record: tr("整理学习记录", "Condense study record")
         case .roadmap: tr("生成路线图大纲", "Roadmap outline")
+        case .lectureDecks: tr("判断相关课件", "Find related decks")
+        case .lectureSupplements: tr("补充要点对齐", "Lecture supplements")
+        case .lectureNotes: tr("课堂笔记", "Lecture notes")
         }
     }
 
@@ -53,6 +70,9 @@ enum ModelTask: String, Codable, CaseIterable, Identifiable, Sendable {
         case .autoExplain: tr("跟随时和讲解共用缓存", "Shares the cache with Explain & ask when following it")
         case .record: tr("只做摘要；和讲解用的模型不同时，请求里不带课件全文", "Only summarizes; with a different model than Explain & ask, the deck text is left out")
         case .roadmap: tr("读整份课件整理出结构；每份课件只生成一次，之后读缓存", "Reads the whole deck to map its structure; generated once per deck, then cached")
+        case .lectureDecks: tr("整理课堂录音的第 1 步：看转写摘录和各课件开头，判断讲了哪几份", "Organizing step 1: reads transcript excerpts and the start of each deck to find what was covered")
+        case .lectureSupplements: tr("第 2 步：对照课件逐段找出老师补充的内容；课件放在请求前部，各段共用缓存", "Step 2: compares each part of the lecture with the slides; the deck comes first so the parts share the cache")
+        case .lectureNotes: tr("第 3 步：把整节课写成笔记，术语保留英文", "Step 3: writes notes for the whole lecture, keeping terms in English")
         }
     }
 
@@ -62,6 +82,9 @@ enum ModelTask: String, Codable, CaseIterable, Identifiable, Sendable {
         case .autoExplain: "sparkles"
         case .record: "doc.text"
         case .roadmap: "map"
+        case .lectureDecks: "doc.text.magnifyingglass"
+        case .lectureSupplements: "text.badge.plus"
+        case .lectureNotes: "note.text"
         }
     }
 }

@@ -38,6 +38,8 @@
   let query = '';
   /** 用户自己滚动了转写：几秒内不自动滚到当前句。 */
   let manualScrollUntil = 0;
+  /** 上次显示的整理阶段：阶段变了就滚回顶部，让面板露出来。 */
+  let shownOrganizeStage = null;
 
   // ---------- 格式 ----------
 
@@ -132,7 +134,7 @@
 
     const organize = $('organize');
     organize.innerHTML = ICON.sparkles + `<span>${d.notes ? t('重新整理', 'Organize again') : t('AI 整理', 'Organize with AI')}</span>`;
-    organize.disabled = d.status !== 'ready';
+    organize.disabled = d.status !== 'ready' || !!d.organize;
     organize.title = d.status === 'ready'
       ? t('找出相关课件，生成补充要点和课堂笔记', 'Find the related decks, then write supplements and notes')
       : t('录音和转写完成后可以整理', 'Available once recording and transcription finish');
@@ -152,7 +154,7 @@
     const supplementCount = d.supplements ? d.supplements.length : 0;
     const tabs = [
       ['transcript', t('转写', 'Transcript'), ''],
-      ['notes', t('笔记', 'Notes'), ''],
+      ['notes', t('笔记', 'Notes'), d.notes ? '·' : ''],
       ['supplements', t('补充要点', 'Supplements'), supplementCount ? String(supplementCount) : ''],
     ];
     $('tabs').innerHTML = tabs.map(([key, label, count]) =>
@@ -217,22 +219,40 @@
     return result;
   }
 
+  /** 整理阶段变了：滚回顶部。返回 true 时不再滚到当前句。 */
+  function revealOrganize() {
+    const stage = detail && detail.organize ? detail.organize.stage : null;
+    const changed = stage !== shownOrganizeStage;
+    shownOrganizeStage = stage;
+    if (stage && changed) { $('content').scrollTop = 0; return true; }
+    return !!stage && $('content').scrollTop === 0;
+  }
+
   function renderContent(keepScroll) {
     const content = $('content');
     content.textContent = '';
     const d = detail;
+    if (d.organize) content.appendChild(organizePanel(d.organize));
+    if (tab !== 'transcript') revealOrganize();
     if (tab === 'notes') {
-      content.appendChild(placeholder(
-        t('还没有笔记', 'No notes yet'),
-        t('点「AI 整理」后，这里会出现整节课的笔记：课件里讲了什么、老师补充了什么、课件以外的内容，术语保留英文。',
-          'After you organize this lecture, the notes for the whole class appear here: what the slides covered, what the lecturer added, and anything beyond the slides.')));
+      if (d.notes) content.appendChild(notesView(d.notes));
+      else if (!d.organize) {
+        content.appendChild(placeholder(
+          t('还没有笔记', 'No notes yet'),
+          t('点「AI 整理」后，这里会出现整节课的笔记：课件里讲了什么、老师补充了什么、课件以外的内容，术语保留英文。',
+            'After you organize this lecture, the notes for the whole class appear here: what the slides covered, what the lecturer added, and anything beyond the slides.')));
+      }
       return;
     }
     if (tab === 'supplements') {
-      content.appendChild(placeholder(
-        t('还没有补充要点', 'No supplements yet'),
-        t('整理时会把老师讲了、课件上没有的内容找出来，按页放进课件的注释里，点注释可以跳回录音。',
-          'Organizing finds what the lecturer said that isn\'t on the slides and attaches it to the matching pages as notes that jump back to the recording.')));
+      if (d.supplements && d.supplements.length) content.appendChild(supplementsView(d.supplements));
+      else if (d.supplements) content.appendChild(placeholder(t('没有找到补充要点', 'No supplements'), t('这节课老师讲的内容课件上基本都有。', 'Almost everything the lecturer said is already on the slides.'), true));
+      else if (!d.organize) {
+        content.appendChild(placeholder(
+          t('还没有补充要点', 'No supplements yet'),
+          t('整理时会把老师讲了、课件上没有的内容找出来，对应到课件的页，点时间可以跳回录音。',
+            'Organizing finds what the lecturer said that isn\'t on the slides and matches it to slide pages; click a time to jump back to the recording.')));
+      }
       return;
     }
 
@@ -292,6 +312,7 @@
       content.appendChild(placeholder(t('没有转写内容', 'No transcript'), t('这段录音里没有识别出说话的声音。', 'No speech was recognized in this recording.')));
     }
     if (needle) toast(matches ? t(`找到 ${matches} 处`, `${matches} matches`) : t('没有找到', 'No matches'));
+    if (revealOrganize()) return;
     highlightCurrent(!keepScroll);
   }
 
@@ -312,17 +333,158 @@
     return row;
   }
 
-  function placeholder(title, body) {
+  function placeholder(title, body, noButton) {
     const box = document.createElement('div');
     box.className = 'placeholder';
     box.innerHTML = `<strong>${escape(title)}</strong><p>${escape(body)}</p>`;
-    if (detail && detail.status === 'ready') {
+    if (!noButton && detail && detail.status === 'ready' && !detail.organize) {
       const button = document.createElement('button');
       button.type = 'button';
       button.className = 'primary';
       button.innerHTML = ICON.sparkles + `<span>${t('AI 整理', 'Organize with AI')}</span>`;
       button.addEventListener('click', organize);
       box.appendChild(button);
+    }
+    return box;
+  }
+
+  // ---------- AI 整理 ----------
+
+  /** 整理的进度：判断课件、选课件、进行中、出错。 */
+  function organizePanel(state) {
+    const box = document.createElement('div');
+    box.className = 'organize';
+    const cancel = () => post({ type: 'organizeCancel', id: detail.id });
+    if (state.stage === 'finding' || state.stage === 'running') {
+      const fraction = state.total ? Math.min(1, state.done / state.total) : 0;
+      const step = state.stage === 'finding' ? 1 : state.step;
+      const message = state.stage === 'finding' ? t('正在判断这节课讲了哪几份课件…', 'Finding which decks this lecture covered…') : state.message;
+      box.innerHTML = `
+        <div class="org-head"><span class="spinner"></span><strong>${t(`AI 整理 · 第 ${step} 步，共 3 步`, `Organizing · step ${step} of 3`)}</strong><span class="spacer"></span><button type="button" class="link">${t('取消', 'Cancel')}</button></div>
+        <p class="org-message">${escape(message)}</p>
+        ${state.total ? `<div class="org-bar"><div style="width:${fraction * 100}%"></div></div>` : ''}`;
+      box.querySelector('.link').addEventListener('click', cancel);
+      return box;
+    }
+    if (state.stage === 'failed') {
+      box.classList.add('failed');
+      box.innerHTML = `
+        <div class="org-head"><strong>${t('整理没有完成', 'Organizing didn\'t finish')}</strong></div>
+        <p class="org-message">${escape(state.message)}</p>
+        <div class="org-actions"><button type="button" class="primary retry">${t('重试', 'Try again')}</button><button type="button" class="link">${t('关闭', 'Close')}</button></div>`;
+      box.querySelector('.retry').addEventListener('click', () => { post({ type: 'organizeCancel', id: detail.id }); post({ type: 'organize', id: detail.id }); });
+      box.querySelector('.link').addEventListener('click', cancel);
+      return box;
+    }
+    // choosing
+    const decks = state.decks || [];
+    const suggested = decks.filter((deck) => deck.suggested);
+    const others = decks.filter((deck) => !deck.suggested);
+    box.innerHTML = `
+      <div class="org-head"><strong>${t('这节课讲了哪几份课件？', 'Which decks did this lecture cover?')}</strong></div>
+      <p class="org-message">${decks.length
+        ? (suggested.length ? t('AI 选出了下面这些，可以增减。', 'These were picked by AI; add or remove as needed.') : t('AI 没有找到明显相关的课件，可以自己勾选。', 'AI found no clearly related deck; pick them yourself.'))
+        : t('课程文件夹里没有找到课件，会只根据转写写笔记。', 'No decks were found in the course folder; notes will be written from the transcript only.')}</p>
+      <div class="deck-list"></div>
+      <p class="org-note">${t('开始后会把转写和勾选课件的文字发给「补充要点对齐」和「课堂笔记」任务的模型（在「设置 → 模型」里可以单独选），按用量计费。',
+        'Starting sends the transcript and the checked decks\' text to the models for Lecture supplements and Lecture notes (choose them in Settings → Model); usage is billed.')}</p>
+      <div class="org-actions"><button type="button" class="primary start"></button><button type="button" class="link">${t('取消', 'Cancel')}</button></div>`;
+    const list = box.querySelector('.deck-list');
+    const row = (deck) => {
+      const label = document.createElement('label');
+      label.className = 'deck' + (deck.readable ? '' : ' unreadable');
+      label.innerHTML = `<input type="checkbox" ${deck.suggested && deck.readable ? 'checked' : ''} ${deck.readable ? '' : 'disabled'} value="${escape(deck.path)}">
+        <span class="deck-text"><span class="deck-title">${escape(deck.title)}${deck.recorded ? `<span class="tag">${t('录音时打开', 'Open while recording')}</span>` : ''}</span>
+        <span class="deck-sub">${escape(deck.reason || (deck.readable ? deck.folder : t('没有转换过，打开一次后才能读到内容', 'Not converted yet; open it once so its text can be read')))}</span></span>`;
+      return label;
+    };
+    suggested.forEach((deck) => list.appendChild(row(deck)));
+    if (others.length) {
+      const more = document.createElement('details');
+      more.open = suggested.length === 0;
+      more.innerHTML = `<summary>${t(`其他 ${others.length} 份课件`, `${others.length} other decks`)}</summary>`;
+      others.forEach((deck) => more.appendChild(row(deck)));
+      list.appendChild(more);
+    }
+    const start = box.querySelector('.start');
+    const update = () => {
+      const count = box.querySelectorAll('input:checked').length;
+      start.textContent = count ? t(`开始整理（${count} 份课件）`, `Start (${count} ${count === 1 ? 'deck' : 'decks'})`) : t('不对照课件，只写笔记', 'Notes only, without slides');
+    };
+    box.addEventListener('change', update);
+    update();
+    start.addEventListener('click', () => {
+      const paths = [...box.querySelectorAll('input:checked')].map((input) => input.value);
+      post({ type: 'organizeConfirm', id: detail.id, decks: paths });
+    });
+    box.querySelector('.link').addEventListener('click', cancel);
+    return box;
+  }
+
+  const md = window.markdownit ? window.markdownit({ html: false, linkify: true, breaks: false, typographer: false }) : null;
+
+  /** 笔记：Markdown；公式用 KaTeX；（12:05）这样的时间点一下就从那里播放。 */
+  function notesView(source) {
+    const box = document.createElement('article');
+    box.className = 'notes';
+    const math = [];
+    let text = source.replace(/\$\$([\s\S]+?)\$\$|\$([^$\n]+?)\$/g, (whole, block, inline) => {
+      math.push({ tex: block || inline, display: !!block });
+      return `@@MATH${math.length - 1}@@`;
+    });
+    let html = md ? md.render(text) : `<pre>${escape(text)}</pre>`;
+    html = html.replace(/@@MATH(\d+)@@/g, (whole, i) => {
+      const item = math[Number(i)];
+      try { return window.katex ? window.katex.renderToString(item.tex, { displayMode: item.display, throwOnError: false }) : escape(item.tex); }
+      catch (e) { return escape(item.tex); }
+    });
+    // 时间：12:05 或 1:02:03（前后是括号或方括号）
+    html = html.replace(/([（(\[])(\d{1,2}:\d{2}(?::\d{2})?)([）)\]])/g, (whole, open, time, close) => {
+      const parts = time.split(':').map(Number);
+      const seconds = parts.reduce((sum, n) => sum * 60 + n, 0);
+      return `${open}<a class="ts" data-t="${seconds}" title="${t('从这里播放', 'Play from here')}">${time}</a>${close}`;
+    });
+    box.innerHTML = window.DOMPurify ? window.DOMPurify.sanitize(html, { ADD_ATTR: ['data-t'] }) : html;
+    box.addEventListener('click', (event) => {
+      const link = event.target.closest('a.ts');
+      if (link) { event.preventDefault(); seek(Number(link.dataset.t), true); return; }
+      const anchor = event.target.closest('a[href]');
+      if (anchor) event.preventDefault();
+    });
+    return box;
+  }
+
+  /** 补充要点：按课件分组、按页排好；课件以外的放最后。 */
+  function supplementsView(items) {
+    const box = document.createElement('div');
+    box.className = 'supplements';
+    const groups = new Map();
+    for (const item of items) {
+      const key = item.deck || '';
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(item);
+    }
+    const keys = [...groups.keys()].sort((a, b) => (a === '') - (b === '') || a.localeCompare(b));
+    for (const key of keys) {
+      const list = groups.get(key).sort((a, b) => (a.page || 0) - (b.page || 0) || a.t - b.t);
+      const section = document.createElement('section');
+      section.innerHTML = `<h3>${escape(key ? list[0].deckTitle : t('课件以外', 'Beyond the slides'))}<span class="count">${list.length}</span></h3>`;
+      for (const item of list) {
+        const row = document.createElement('div');
+        row.className = 'supp';
+        row.innerHTML = `
+          ${item.page ? `<button type="button" class="page" title="${t('在课件里打开这一页', 'Open this page')}">p.${item.page}</button>` : '<span class="page none">—</span>'}
+          <div class="supp-body">
+            <p class="point">${escape(item.point)}</p>
+            ${item.quote ? `<p class="quote">“${escape(item.quote)}”</p>` : ''}
+          </div>
+          <button type="button" class="ts-button" title="${t('从这里播放', 'Play from here')}">${ICON.play}<span>${clock(item.t, detail.duration >= 3600)}</span></button>`;
+        const page = row.querySelector('button.page');
+        if (page) page.addEventListener('click', () => post({ type: 'openPage', deck: item.deck, page: item.page }));
+        row.querySelector('.ts-button').addEventListener('click', () => seek(item.t, true));
+        section.appendChild(row);
+      }
+      box.appendChild(section);
     }
     return box;
   }
@@ -611,8 +773,35 @@
     r.lines = demoLines(r.segments);
     if (r.duration === undefined) r.duration = r.segments.filter((s) => s.state === 'complete').reduce((sum, s) => sum + s.duration, 0);
   }
-  DEMO.b.notes = '# 内存管理';
-  DEMO.b.supplements = new Array(7).fill(0);
+  DEMO.b.notes = [
+    '这节课从“为什么需要虚拟内存”讲起，介绍了分页、页表和 TLB，最后用一道例题算了有效访问时间（EAT）。老师补充了几个课件上没有的例子，并提醒了考试的重点。',
+    '',
+    '## 为什么需要虚拟内存（00:12）',
+    '- 每个进程都以为自己独占一段连续的地址空间（**address space**），见课件第 3 页。',
+    '- 老师补充：早期系统直接用物理地址，一个程序写错就会改掉别人的内存，这是引入 **memory protection** 的原因。',
+    '',
+    '## 分页与页表（08:40）',
+    '- 逻辑地址分成 page number 和 offset，见课件第 6–7 页。',
+    '- 页表大小：$2^{20}$ 个表项 × 4 B = 4 MB，所以需要 **multi-level page table**（课件第 9 页）。',
+    '- 老师用图书馆的索引卡片类比多级页表：先查书架，再查那一格的卡片（09:55）。',
+    '',
+    '## TLB 与有效访问时间（31:20）',
+    '- 有效访问时间：$$EAT = \\alpha (t_{TLB} + t_{mem}) + (1-\\alpha)(t_{TLB} + 2t_{mem})$$',
+    '- 课件上的例题假设 TLB 命中率 80%，老师又算了一遍 98% 的情况，结论是命中率比 TLB 速度更重要（35:02）。',
+    '',
+    '## 课件以外',
+    '- 老师提到 Linux 用的是四级页表，x86-64 新的处理器支持五级（42:10）。',
+    '',
+    '## 提醒',
+    '- 期中考试会考 EAT 的计算，**单位要写清楚**（48:30）。',
+  ].join('\n');
+  DEMO.b.supplements = [
+    { deck: '/c/03-memory.pdf', deckTitle: '03-memory', page: 3, point: '早期系统直接用物理地址，一个程序写错就可能改掉别的程序的内存，这是引入 memory protection 的直接原因。', quote: 'back in the day you just used physical addresses, and one bad pointer could overwrite someone else', t: 95 },
+    { deck: '/c/03-memory.pdf', deckTitle: '03-memory', page: 9, point: '用图书馆索引卡片类比多级页表：先找到书架（外层页表），再在那一格里找卡片（内层页表）。', quote: 'think of it like the card catalogue in a library', t: 595 },
+    { deck: '/c/03-memory.pdf', deckTitle: '03-memory', page: 14, point: 'TLB 命中率从 80% 提到 98% 时 EAT 下降得比把 TLB 做快还多，结论是命中率比 TLB 本身的速度更重要。', quote: 'the hit ratio matters far more than how fast the TLB itself is', t: 2102 },
+    { deck: '/c/03-memory.pdf', deckTitle: '03-memory', page: 14, point: '考试会考 EAT 的计算，单位（ns）一定要写清楚，去年很多人漏写被扣分。', quote: 'please write the units, last year a lot of people lost marks', t: 2910 },
+    { point: 'Linux 在 x86-64 上用四级页表，新的处理器支持五级页表（LA57）。', quote: 'Linux actually uses four levels, and newer chips support five', t: 2530 },
+  ];
 
   function demoSelect(id) {
     demoPlay(false);
@@ -644,6 +833,14 @@
     lang: (code) => { lang = code; document.documentElement.lang = code === 'zh' ? 'zh-CN' : 'en'; renderList(); renderDetail(); },
     tab: (key) => { tab = key; renderDetail(); },
     empty: () => window.Recordings.setList({ items: [] }),
+    organize: (state) => { detail.organize = state; renderDetail(); },
+    choosing: () => window.__demo.organize({ stage: 'choosing', decks: [
+      { path: '/c/04.pdf', title: '04-processes-threads', folder: 'Lectures', readable: true, suggested: true, recorded: true, reason: '讲到了 PCB、上下文切换和线程模型，和这份课件的内容一致。' },
+      { path: '/c/05.pdf', title: '05-scheduling', folder: 'Lectures', readable: true, suggested: true, reason: '后半段讲了 round robin 和时间片，对应调度这一章的开头。' },
+      { path: '/c/03.pdf', title: '03-memory', folder: 'Lectures', readable: true, suggested: false, reason: '' },
+      { path: '/c/t09.pptx', title: 'Tutorial09', folder: 'Tutorial', readable: false, suggested: false, reason: '' },
+    ] }),
+    running: () => window.__demo.organize({ stage: 'running', step: 2, message: '对照课件找补充要点（第 3/8 段）', done: 2, total: 8 }),
   };
   if (/[?&]lang=(zh|en)/.test(location.search)) window.__demo.lang(RegExp.$1);
 })();

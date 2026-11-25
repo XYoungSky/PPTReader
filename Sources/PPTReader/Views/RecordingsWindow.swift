@@ -6,14 +6,14 @@ import WebKit
 enum RecordingsPayload {
     enum Status: String { case recording, transcribing, ready }
 
-    static func item(_ recording: Recording, status: Status, elapsed: Double? = nil) -> [String: Any] {
+    static func item(_ recording: Recording, status: Status, elapsed: Double? = nil, organized: Bool = false) -> [String: Any] {
         var item: [String: Any] = [
             "id": recording.id,
             "title": recording.title,
             "startedAt": recording.startedAt.timeIntervalSince1970 * 1000,
             "duration": recording.duration,
             "status": status.rawValue,
-            "organized": false,
+            "organized": organized,
         ]
         if let course = recording.coursePath { item["course"] = URL(fileURLWithPath: course).lastPathComponent }
         if let elapsed { item["elapsed"] = elapsed }
@@ -51,6 +51,43 @@ enum RecordingsPayload {
         if let deck = recording.deckPath { payload["deck"] = URL(fileURLWithPath: deck).lastPathComponent }
         if let live { payload["live"] = ["text": live.0, "volatile": live.1] }
         return payload
+    }
+
+    /// 整理结果：补充要点带上课件名，时间是录音时间。
+    static func supplements(_ result: LectureOrganizer.Result) -> [[String: Any]] {
+        result.supplements.map { item in
+            var entry: [String: Any] = ["point": item.point, "quote": item.quote, "t": item.time]
+            if let deck = item.deck {
+                entry["deck"] = deck
+                entry["deckTitle"] = URL(fileURLWithPath: deck).deletingPathExtension().lastPathComponent
+            }
+            if let page = item.page { entry["page"] = page }
+            return entry
+        }
+    }
+
+    /// 「AI 整理」进行到哪一步。
+    static func organize(_ state: LectureController.OrganizeState, recordedDeck: String?) -> [String: Any] {
+        switch state {
+        case .finding:
+            return ["stage": "finding"]
+        case .choosing(let options):
+            return ["stage": "choosing", "decks": options.map { option -> [String: Any] in
+                [
+                    "path": option.candidate.path,
+                    "title": option.candidate.title,
+                    "folder": option.candidate.folder,
+                    "readable": option.candidate.readable,
+                    "suggested": option.suggested,
+                    "reason": option.reason,
+                    "recorded": option.candidate.path == recordedDeck,
+                ]
+            }]
+        case .running(let step, let message, let done, let total):
+            return ["stage": "running", "step": step, "message": message, "done": done, "total": total]
+        case .failed(let message):
+            return ["stage": "failed", "message": message]
+        }
     }
 
     /// 导出的纯文本转写：每段一行，前面是录音时间。
@@ -141,7 +178,8 @@ final class RecordingsWindow: NSObject {
             "selected": selected.map { $0 as Any } ?? NSNull(),
             "items": recordings.map { recording in
                 let status = status(of: recording)
-                return RecordingsPayload.item(recording, status: status, elapsed: status == .recording ? elapsed : nil)
+                return RecordingsPayload.item(recording, status: status, elapsed: status == .recording ? elapsed : nil,
+                                              organized: store.notes(recording.id) != nil)
             },
         ])
         return recordings
@@ -159,8 +197,14 @@ final class RecordingsWindow: NSObject {
             live = (lectures.captionFinal, lectures.captionVolatile)
             duration = lectures.recorder.elapsed
         }
-        send("Recordings.showDetail", RecordingsPayload.detail(recording, lines: store.transcript(recording.id), status: status,
-                                                               queued: queued, duration: duration, live: live))
+        var payload = RecordingsPayload.detail(recording, lines: store.transcript(recording.id), status: status,
+                                               queued: queued, duration: duration, live: live)
+        if let notes = store.notes(recording.id) { payload["notes"] = notes }
+        if let result = store.organized(recording.id) { payload["supplements"] = RecordingsPayload.supplements(result) }
+        if let state = lectures?.organizing[recording.id] {
+            payload["organize"] = RecordingsPayload.organize(state, recordedDeck: recording.deckPath)
+        }
+        send("Recordings.showDetail", payload)
         player.load(status == .recording ? nil : recording, store: store)
     }
 
@@ -196,7 +240,16 @@ final class RecordingsWindow: NSObject {
         case "rate":
             if let rate = (dict["rate"] as? NSNumber)?.floatValue { player.setRate(rate) }
         case "organize":
-            send("Recordings.toast", tr("AI 整理还在开发中", "Organizing with AI is coming soon"))
+            if let id { lectures?.organize(id) }
+        case "organizeConfirm":
+            if let id, let paths = dict["decks"] as? [String] { lectures?.confirmOrganize(id, decks: paths) }
+        case "organizeCancel":
+            if let id { lectures?.cancelOrganize(id) }
+        case "openPage":
+            if let deck = dict["deck"] as? String, let page = (dict["page"] as? NSNumber)?.intValue {
+                SettingsWindow.model?.open(deck: URL(fileURLWithPath: deck), page: page)
+                NSApp.mainWindow?.makeKeyAndOrderFront(nil)
+            }
         case "rename": if let id { rename(id) }
         case "reveal": if let id { NSWorkspace.shared.activateFileViewerSelecting([store.folder(id)]) }
         case "exportAudio": if let id { exportAudio(id) }
@@ -283,6 +336,7 @@ final class RecordingsWindow: NSObject {
             MainActor.assumeIsolated {
                 guard response == .alertFirstButtonReturn, let self else { return }
                 if self.player.recordingID == id { self.player.stop() }
+                if self.lectures?.organizing[id] != nil { self.lectures?.cancelOrganize(id) }
                 try? self.store.delete(id)
                 if self.selected == id { self.selected = nil }
                 self.reload()
