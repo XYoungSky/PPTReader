@@ -356,30 +356,22 @@ final class ChatController {
         guard let last = PromptBuilder.lastDroppedMessage(past: past, context: context),
               last.id != recordFailedThrough else { return }
         let covered = (record?.messageCount ?? 0) + (past.firstIndex { $0.id == last.id }.map { $0 + 1 } ?? past.count)
+        // 和聊天请求共用前缀（同一个 makeContext）和缓存键，整理时课件部分能命中缓存
         let request = PromptBuilder.recordRequest(past: past, context: context)
-        let quirks = settings.quirks(config.providerID, config.model)
-        let options = OpenAIClient.RequestOptions(maxTokens: quirks.maxOutput == 0 ? nil : min(8_192, quirks.maxOutput ?? 8_192),
-                                                  omit: Set(quirks.omit), cacheKey: cacheKey)
-        guard let body = try? OpenAIClient.makeBody(config: config, messages: request.messages, options: options) else { return }
+        guard let task = try? LLMTask(config: config, messages: request.messages,
+                                      quirks: settings.quirks(config.providerID, config.model), cacheKey: cacheKey) else { return }
 
         isRecording = true
         let source = thread.sourcePath
+        let stats = stats
         let token = UUID()
         recordToken = token
         recordTask = Task { [weak self] in
-            var text = ""
-            var usage: TokenUsage?
-            var failed = false
+            let result: Result<LLMTask.Output, Error>
             do {
-                for try await event in OpenAIClient.stream(config: config, body: body.data) {
-                    switch event {
-                    case .content(let chunk): text += chunk
-                    case .usage(let value): usage = value
-                    default: break
-                    }
-                }
+                result = .success(try await task.run(stats: stats, deck: source))
             } catch {
-                failed = true
+                result = .failure(error)
             }
             guard let self, self.recordToken == token else { return }
             defer {
@@ -388,14 +380,12 @@ final class ChatController {
                 self.isRecording = false
             }
             guard !Task.isCancelled, self.thread?.sourcePath == source else { return }
-            self.stats.recordReply(deck: source, page: nil, model: config.model, kind: .housekeeping, usage: usage, at: Date())
-            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !failed, !trimmed.isEmpty else {
+            guard case .success(let output) = result else {
                 // 整理失败就照旧丢弃较早的对话，下一次需要丢弃时再试
                 self.recordFailedThrough = last.id
                 return
             }
-            self.record = StudyRecord(text: String(trimmed.prefix(PromptBuilder.recordCharLimit)), throughID: last.id, messageCount: covered)
+            self.record = StudyRecord(text: String(output.text.prefix(PromptBuilder.recordCharLimit)), throughID: last.id, messageCount: covered)
             self.persist()
         }
     }
