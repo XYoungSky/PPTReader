@@ -9,6 +9,7 @@ A lightweight macOS app for studying course slides with an AI tutor that has rea
 - **Read and ask side by side** — PDF, PowerPoint and Word (PPT/Word are converted by your installed Office; originals are never touched).
 - **Context-aware** — every question includes the whole deck's text, the page you're on, your selection and a screenshot of the page.
 - **Ways to ask** — explain this page · explain / translate / give examples for a selection · free questions · auto-explain on page turn.
+- **Box selection** — Shift-drag to draw a box around a figure, formula or any part of a slide, then explain, translate or ask about it: a sharp screenshot of the box (rendered from the PDF) and its text are sent together. Make boxing the default drag in Settings → Tutor; the question's bubble shows a thumbnail that jumps back to the page.
 - **Rich answers** — Markdown, LaTeX, code, tables, SVG, Mermaid and inline HTML. Click any diagram to open it in a zoomable preview (pinch / ⌘-scroll, drag to pan) and copy or save it as PNG. Move the preview by its top edge or by ⌥-dragging anywhere, and make it translucent to compare it with the slides.
 - **Explanation style** — choose how long answers are and how many diagrams and worked examples they include, and add your own instructions (e.g. "write out full derivations"). Open it from the AI panel's More menu.
 - **Statistics** — reading time, pages read, questions and token usage by day, deck, course and model (7 days / 30 days / all time), plus a GitHub-style heatmap of the past year. Each deck shows the course folder it belongs to; earlier chats are counted automatically.
@@ -28,7 +29,7 @@ A lightweight macOS app for studying course slides with an AI tutor that has rea
 
 ## Build
 
-For a prebuilt app, download `PPTReader-v1.7-macOS-arm64.zip` from the [v1.7 release](https://github.com/XYoungSky/PPTReader/releases/tag/v1.7), unzip it, and move `PPTReader.app` to Applications. This build requires an Apple Silicon Mac and macOS 14 or later. It uses an ad-hoc signature and is not notarized by Apple; macOS may block the first launch.
+For a prebuilt app, download `PPTReader-v1.8-macOS-arm64.zip` from the [v1.8 release](https://github.com/XYoungSky/PPTReader/releases/tag/v1.8), unzip it, and move `PPTReader.app` to Applications. This build requires an Apple Silicon Mac and macOS 14 or later. It uses an ad-hoc signature and is not notarized by Apple; macOS may block the first launch.
 
 To build from source:
 
