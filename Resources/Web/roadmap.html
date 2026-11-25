@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>学习路线图</title>
+  <link rel="stylesheet" href="roadmap.css">
+</head>
+<body>
+  <header id="header">
+    <div class="title-row">
+      <h1 id="title"></h1>
+      <span id="meta"></span>
+      <span class="spacer"></span>
+      <button type="button" id="regenerate">重新生成</button>
+    </div>
+    <div class="summary-row">
+      <button type="button" id="remaining"></button>
+      <div class="legend" aria-hidden="true">
+        <span><i></i>没碰过</span>
+        <span><i class="partial"></i>碰过一部分</span>
+        <span><i class="done"></i>碰过了</span>
+      </div>
+    </div>
+    <div id="strip" role="group" aria-label="每页的进度"></div>
+  </header>
+  <section id="status" hidden>
+    <div class="status-icon" aria-hidden="true"></div>
+    <p id="status-text"></p>
+    <button type="button" id="status-action" hidden></button>
+  </section>
+  <main id="tree">
+    <svg id="links" aria-hidden="true"></svg>
+  </main>
+  <div id="tip" role="tooltip"></div>
+  <div id="toast" role="status" aria-live="polite"></div>
+  <script src="roadmap.js"></script>
+</body>
+</html>

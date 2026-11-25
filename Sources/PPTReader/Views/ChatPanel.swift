@@ -63,6 +63,8 @@ struct ChatPanel: View {
             PopMenuItem(tr("衬线", "Serif"), checked: settings.chatSerif) { settings.chatSerif = true },
             .separator,
             PopMenuItem(tr("清空对话…", "Clear Chat…"), icon: "trash", destructive: true, enabled: model.chat.hasMessages) { confirmClear() },
+            PopMenuItem(tr("学习路线图", "Study Roadmap"), icon: "map", shortcut: ShortcutStore.shared.label(for: .roadmap),
+                        enabled: model.reader != nil) { RoadmapWindow.shared.show() },
             PopMenuItem(tr("学习统计", "Statistics"), icon: "chart.bar.xaxis", shortcut: ShortcutStore.shared.label(for: .statistics)) { StatsWindow.show() },
             PopMenuItem(tr("讲解风格…", "Explanation Style…"), icon: "slider.horizontal.3") { SettingsWindow.show(.explanationStyle) },
             PopMenuItem(tr("学习档案…", "Study Notes…"), icon: "person.text.rectangle") { SettingsWindow.show(.notes) },

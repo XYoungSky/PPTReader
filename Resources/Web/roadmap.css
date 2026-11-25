@@ -1,0 +1,469 @@
+:root {
+  color-scheme: light dark;
+  --bg: #faf9f5;
+  --surface: #ffffff;
+  --fg: #1f1e1d;
+  --fg-2: #4d4b46;
+  --muted: #8f8c84;
+  --hairline: rgba(31, 30, 29, 0.09);
+  --hairline-strong: rgba(31, 30, 29, 0.17);
+  --fill: rgba(31, 30, 29, 0.045);
+  --accent: #c15f3c;
+  --accent-line: rgba(193, 95, 60, 0.36);
+  --accent-soft: rgba(217, 119, 87, 0.12);
+  --link: rgba(31, 30, 29, 0.16);
+  --link-done: rgba(31, 30, 29, 0.08);
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.05), 0 8px 24px rgba(0, 0, 0, 0.08);
+  --font: -apple-system, BlinkMacSystemFont, "PingFang SC", "Helvetica Neue", sans-serif;
+  --serif: "Iowan Old Style", "Palatino", "Songti SC", "STSong", serif;
+  --mono: "SF Mono", ui-monospace, Menlo, monospace;
+  --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #262624;
+    --surface: #30302e;
+    --fg: #f0eee7;
+    --fg-2: #c9c6bc;
+    --muted: #8c897f;
+    --hairline: rgba(255, 255, 255, 0.08);
+    --hairline-strong: rgba(255, 255, 255, 0.16);
+    --fill: rgba(255, 255, 255, 0.05);
+    --accent: #e3906f;
+    --accent-line: rgba(227, 144, 111, 0.4);
+    --accent-soft: rgba(217, 119, 87, 0.17);
+    --link: rgba(255, 255, 255, 0.15);
+    --link-done: rgba(255, 255, 255, 0.07);
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 24px rgba(0, 0, 0, 0.32);
+  }
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font: 13px/1.4 var(--font);
+  -webkit-font-smoothing: antialiased;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}
+
+button:focus-visible {
+  outline: 2px solid var(--accent-line);
+  outline-offset: 2px;
+}
+
+/* ---------- 顶部总览 ---------- */
+
+#header {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  padding: 26px 32px 16px;
+  background: var(--bg);
+  border-bottom: 1px solid transparent;
+  transition: border-color 0.2s;
+}
+
+#header.scrolled { border-bottom-color: var(--hairline); }
+
+.title-row {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+
+#title {
+  margin: 0;
+  font: 600 22px/1.25 var(--serif);
+  letter-spacing: 0.005em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#meta {
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.spacer { flex: 1; }
+
+#regenerate {
+  align-self: center;
+  flex: none;
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 7px;
+  color: var(--fg-2);
+  font-size: 12px;
+}
+
+#regenerate:hover { background: var(--fill); }
+
+.summary-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-top: 12px;
+}
+
+#remaining {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 28px;
+  padding: 0 12px 0 11px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--fg);
+  font-size: 13px;
+  font-weight: 500;
+  transition: background 0.15s;
+}
+
+#remaining:hover { background: color-mix(in srgb, var(--accent-soft), var(--accent) 8%); }
+
+#remaining .count {
+  color: var(--accent);
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+
+#remaining .next {
+  color: var(--fg-2);
+  font-weight: 400;
+}
+
+#remaining svg { width: 12px; height: 12px; color: var(--accent); }
+
+#remaining.all-done { background: var(--fill); cursor: default; }
+
+.legend {
+  display: flex;
+  gap: 14px;
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+
+.legend i {
+  display: inline-block;
+  width: 14px;
+  height: 8px;
+  border-radius: 4px;
+  border: 1px solid var(--accent-line);
+  background: var(--surface);
+}
+
+.legend i.partial { background: linear-gradient(90deg, var(--accent) 50%, var(--surface) 50%); }
+.legend i.done { border-color: var(--hairline-strong); background: var(--fill); }
+
+/* 每页一格：碰过的实心，没碰过的空心，当前页更高；不在大纲里的页（封面等）很淡 */
+#strip {
+  display: flex;
+  gap: 2px;
+  height: 14px;
+  align-items: center;
+  margin-top: 14px;
+}
+
+#strip button {
+  flex: 1;
+  min-width: 2px;
+  height: 8px;
+  border-radius: 2px;
+  box-shadow: inset 0 0 0 1px var(--accent-line);
+  transition: height 0.15s var(--ease-out);
+}
+
+#strip button.touched { background: var(--accent); box-shadow: none; opacity: 0.38; }
+#strip button.outside { box-shadow: inset 0 0 0 1px var(--hairline); }
+#strip button.current { height: 14px; opacity: 1; }
+#strip button:hover { height: 14px; }
+
+/* ---------- 树 ---------- */
+
+#tree {
+  position: relative;
+  margin: 8px 0 40px;
+}
+
+#links {
+  position: absolute;
+  inset: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+
+#links path {
+  fill: none;
+  stroke: var(--link);
+  stroke-width: 1.2;
+}
+
+#links path.done { stroke: var(--link-done); }
+
+.node {
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transform: translate(var(--x), var(--y));
+}
+
+/* 展开时新出现的节点淡入 */
+.node.enter { animation: node-in 0.18s var(--ease-out) both; }
+
+@keyframes node-in {
+  from { opacity: 0; transform: translate(var(--x), var(--y)) translateX(-6px); }
+  to { opacity: 1; transform: translate(var(--x), var(--y)); }
+}
+
+.pill {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 260px;
+  min-height: 28px;
+  padding: 5px 12px;
+  border: 1px solid var(--accent-line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--fg);
+  text-align: left;
+  transition: background 0.15s, border-color 0.15s, box-shadow 0.15s, opacity 0.15s;
+}
+
+.pill:hover { box-shadow: var(--shadow); }
+
+.pill .label {
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.pill .pages {
+  flex: none;
+  color: var(--muted);
+  font: 10.5px/1 var(--mono);
+  letter-spacing: -0.01em;
+}
+
+/* 层级靠字号和字重区分 */
+.depth-0 .pill { padding: 6px 14px; font-size: 14px; font-weight: 600; min-height: 32px; }
+.depth-1 .pill { font-size: 13px; font-weight: 500; }
+.depth-2 .pill { min-height: 26px; padding: 4px 11px; font-size: 12.5px; color: var(--fg-2); }
+
+/* 碰过的整块变淡，带一个小勾 */
+.node.done .pill {
+  border-color: var(--hairline-strong);
+  background: transparent;
+  opacity: 0.55;
+}
+
+.node.done .pill:hover { opacity: 0.85; }
+
+.check {
+  flex: none;
+  width: 11px;
+  height: 11px;
+  color: var(--accent);
+}
+
+/* 部分碰过：胶囊底部一条细进度线 */
+.progress {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: 3px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--hairline);
+  overflow: hidden;
+}
+
+.progress::after {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: var(--progress);
+  border-radius: 1px;
+  background: var(--accent);
+}
+
+.depth-0 .pill:has(.progress) { padding-bottom: 8px; }
+.depth-1 .pill:has(.progress), .depth-2 .pill:has(.progress) { padding-bottom: 7px; }
+
+/* 你在这里：当前页所在的最深一层节点 */
+.node.current .pill {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  opacity: 1;
+}
+
+.here {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+/* 折叠：浮在胶囊右侧的连线起点上，悬停时才出现；折叠后一直显示“+N” */
+.toggle {
+  position: absolute;
+  left: calc(100% + 5px);
+  top: 50%;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  border-radius: 9px;
+  background: var(--bg);
+  box-shadow: 0 0 0 1px var(--hairline-strong);
+  color: var(--muted);
+  font: 500 10.5px/1 var(--font);
+  font-variant-numeric: tabular-nums;
+  opacity: 0;
+  transition: opacity 0.12s, color 0.12s;
+}
+
+.node:hover .toggle, .toggle:focus-visible, .node.collapsed .toggle { opacity: 1; }
+.toggle:hover { color: var(--fg); }
+.toggle svg { width: 10px; height: 10px; }
+
+/* 在 app 里：标题栏透明，给左上角的窗口按钮让出一行 */
+body.in-app #header { padding-top: 42px; }
+
+/* ---------- 状态：生成中、出错、还没有路线图 ---------- */
+
+#status {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  max-width: 480px;
+  margin: 0 auto;
+  padding: 96px 32px;
+  text-align: center;
+}
+
+#status[hidden], .summary-row[hidden], #strip[hidden], #regenerate[hidden] { display: none; }
+
+#status-text {
+  margin: 0;
+  color: var(--fg-2);
+  font-size: 13px;
+  line-height: 1.65;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.status-icon { width: 22px; height: 22px; }
+
+#status.loading .status-icon {
+  border: 2px solid var(--hairline-strong);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.9s linear infinite;
+}
+
+#status.error .status-icon {
+  border-radius: 50%;
+  background: var(--accent-soft);
+  -webkit-mask: none;
+  position: relative;
+}
+
+#status.error .status-icon::after {
+  content: "!";
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--accent);
+  font: 700 13px/1 var(--font);
+}
+
+#status.empty .status-icon, #status.noDeck .status-icon { display: none; }
+
+#status-action {
+  height: 30px;
+  padding: 0 16px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 500;
+  transition: filter 0.15s;
+}
+
+#status-action:hover { filter: brightness(1.06); }
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ---------- 提示 ---------- */
+
+#tip {
+  position: fixed;
+  z-index: 3;
+  max-width: 280px;
+  padding: 7px 10px;
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: var(--shadow), 0 0 0 1px var(--hairline);
+  color: var(--fg-2);
+  font-size: 12px;
+  line-height: 1.5;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+
+#tip.visible { opacity: 1; }
+#tip strong { color: var(--fg); font-weight: 600; }
+
+#toast {
+  position: fixed;
+  left: 50%;
+  bottom: 22px;
+  transform: translate(-50%, 8px);
+  padding: 7px 14px;
+  border-radius: 999px;
+  background: var(--fg);
+  color: var(--bg);
+  font-size: 12px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.18s, transform 0.18s var(--ease-out);
+}
+
+#toast.visible { opacity: 1; transform: translate(-50%, 0); }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}

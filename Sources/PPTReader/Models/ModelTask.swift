@@ -9,6 +9,8 @@ enum ModelTask: String, Codable, CaseIterable, Identifiable, Sendable {
     case autoExplain
     /// 上下文超出上限时，把较早的对话整理成学习记录。
     case record
+    /// 读整份课件，生成学习路线图的大纲。
+    case roadmap
 
     var id: Self { self }
 
@@ -32,6 +34,7 @@ enum ModelTask: String, Codable, CaseIterable, Identifiable, Sendable {
         switch self {
         case .chat, .autoExplain: .strong
         case .record: .light
+        case .roadmap: .medium
         }
     }
 
@@ -40,6 +43,7 @@ enum ModelTask: String, Codable, CaseIterable, Identifiable, Sendable {
         case .chat: tr("讲解与提问", "Explain & ask")
         case .autoExplain: tr("翻页自动讲解", "Auto-explain on page turn")
         case .record: tr("整理学习记录", "Condense study record")
+        case .roadmap: tr("生成路线图大纲", "Roadmap outline")
         }
     }
 
@@ -48,6 +52,7 @@ enum ModelTask: String, Codable, CaseIterable, Identifiable, Sendable {
         case .chat: tr("讲解本页、自由提问、选中和框选的操作", "Explaining pages, questions, and actions on selections and boxes")
         case .autoExplain: tr("跟随时和讲解共用缓存", "Shares the cache with Explain & ask when following it")
         case .record: tr("只做摘要；和讲解用的模型不同时，请求里不带课件全文", "Only summarizes; with a different model than Explain & ask, the deck text is left out")
+        case .roadmap: tr("读整份课件整理出结构；每份课件只生成一次，之后读缓存", "Reads the whole deck to map its structure; generated once per deck, then cached")
         }
     }
 
@@ -56,6 +61,7 @@ enum ModelTask: String, Codable, CaseIterable, Identifiable, Sendable {
         case .chat: "bubble.left.and.bubble.right"
         case .autoExplain: "sparkles"
         case .record: "doc.text"
+        case .roadmap: "map"
         }
     }
 }

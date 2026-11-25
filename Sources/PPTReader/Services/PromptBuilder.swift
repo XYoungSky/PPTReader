@@ -12,6 +12,20 @@ enum ChatIntent {
     case continuation
 }
 
+extension ChatIntent {
+    /// 记在消息上的操作类型（`ChatMessage.intent`）。
+    var name: String {
+        switch self {
+        case .explainPage, .quick(.explainPage): "explainPage"
+        case .selection(let action, _): "selection." + action.rawValue
+        case .region(let action, _, _): "region." + action.rawValue
+        case .question: "question"
+        case .quick(let action): "quick." + action.rawValue
+        case .continuation: "continuation"
+        }
+    }
+}
+
 enum SelectionAction: String, CaseIterable {
     case explain, translate, example, ask
 }
@@ -103,6 +117,12 @@ enum PromptBuilder {
     // MARK: - 指令
 
     static func userMessage(for intent: ChatIntent, page: Int) -> ChatMessage {
+        var message = baseMessage(for: intent, page: page)
+        message.intent = intent.name
+        return message
+    }
+
+    private static func baseMessage(for intent: ChatIntent, page: Int) -> ChatMessage {
         switch intent {
         case .explainPage(let auto):
             var message = ChatMessage(role: .user, content: tr("讲解第 \(page) 页", "Explain page \(page)"), prompt: explainPrompt(page), page: page)
@@ -157,7 +177,7 @@ enum PromptBuilder {
         case .quick(let action):
             switch action {
             case .explainPage:
-                return userMessage(for: .explainPage(auto: false), page: page)
+                return baseMessage(for: .explainPage(auto: false), page: page)
             case .summary:
                 return ChatMessage(role: .user, content: tr("总结整份课件", "Summarize the deck"), prompt: tr(
                     "总结一下整份课件：用分层列表理出主要内容，标出核心概念、重要结论和公式，说明各部分之间怎么联系，并注明页码。",

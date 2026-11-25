@@ -35,6 +35,7 @@ final class AppModel {
 
     init() {
         chat = ChatController(settings: settings, store: store, stats: stats)
+        chat.onChange = { RoadmapWindow.shared.progressDidChange() }
         tracker = StudyTracker(stats: stats)
         tracker.isBusy = { [weak chat] in chat?.isStreaming ?? false }
         if let folder = library.recentFolders.first {
@@ -120,6 +121,7 @@ final class AppModel {
                 reader.onPageChange = { [weak self] page in
                     self?.chat.pageDidChange(page)
                     self?.tracker.pageViewed(page)
+                    RoadmapWindow.shared.progressDidChange()
                 }
                 self.phase = .ready(reader)
                 // 课程说明按课程文件夹保存：属于打开过的课程文件夹时用它，否则用课件所在的文件夹
@@ -128,10 +130,12 @@ final class AppModel {
                 self.chat.attach(reader: reader, thread: thread, course: course)
                 self.tracker.open(deck: thread.sourcePath, page: reader.currentPage)
                 reader.startTextExtraction()
+                RoadmapWindow.shared.deckDidChange()
             } catch {
                 guard !Task.isCancelled else { return }
                 self.chat.detach()
                 self.phase = .failed(name: name, message: error.localizedDescription)
+                RoadmapWindow.shared.deckDidChange()
             }
         }
     }

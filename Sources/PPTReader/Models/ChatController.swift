@@ -20,6 +20,8 @@ final class ChatController {
     private(set) var isRecording = false
 
     @ObservationIgnored let web = ChatWebBridge()
+    /// 对话保存之后调用（消息变了、翻页记下了），路线图据此更新进度。
+    @ObservationIgnored var onChange: (() -> Void)?
     @ObservationIgnored private let settings: AppSettings
     @ObservationIgnored private let store: ChatStore
     @ObservationIgnored private let stats: StatsStore
@@ -51,6 +53,12 @@ final class ChatController {
     }
 
     // MARK: - 课件切换
+
+    /// 当前课件的路径（统计和缓存按它区分）。
+    var deckPath: String? { thread?.sourcePath }
+
+    /// 当前课件上做过 AI 操作的页，路线图用。
+    var touchedPages: Set<Int> { Roadmap.touchedPages(messages) }
 
     func attach(reader: ReaderModel, thread: ChatThread, course: URL) {
         interruptForSwitch()
@@ -698,6 +706,7 @@ final class ChatController {
         thread.updatedAt = Date()
         self.thread = thread
         store.save(thread)
+        onChange?()
     }
 }
 

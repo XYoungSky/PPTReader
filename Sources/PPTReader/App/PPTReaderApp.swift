@@ -72,6 +72,9 @@ struct AppCommands: Commands {
         CommandGroup(before: .windowList) {
             Button(tr("学习统计", "Statistics")) { StatsWindow.show() }
                 .keyboardShortcut(key(.statistics))
+            Button(tr("学习路线图", "Study Roadmap")) { RoadmapWindow.shared.show() }
+                .keyboardShortcut(key(.roadmap))
+                .disabled(reader == nil)
             Divider()
         }
 

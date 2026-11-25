@@ -5,7 +5,7 @@ import SwiftUI
 /// 可以自定义快捷键的操作。
 enum ShortcutAction: String, CaseIterable, Identifiable {
     case openFolder, refreshFiles
-    case toggleSidebar, toggleChat, statistics
+    case toggleSidebar, toggleChat, statistics, roadmap
     case previousPage, nextPage, zoomIn, zoomOut, fitToWindow, toggleLayout
     case explainPage, askQuestion, summarize, conceptMap, quiz, toggleAutoExplain, toggleThinking, stop
 
@@ -29,7 +29,7 @@ enum ShortcutAction: String, CaseIterable, Identifiable {
     var group: Group {
         switch self {
         case .openFolder, .refreshFiles: .file
-        case .toggleSidebar, .toggleChat, .statistics: .view
+        case .toggleSidebar, .toggleChat, .statistics, .roadmap: .view
         case .previousPage, .nextPage, .zoomIn, .zoomOut, .fitToWindow, .toggleLayout: .reading
         case .explainPage, .askQuestion, .summarize, .conceptMap, .quiz, .toggleAutoExplain, .toggleThinking, .stop: .tutor
         }
@@ -42,6 +42,7 @@ enum ShortcutAction: String, CaseIterable, Identifiable {
         case .toggleSidebar: tr("显示 / 隐藏侧边栏", "Show / hide sidebar")
         case .toggleChat: tr("显示 / 隐藏 AI 面板", "Show / hide AI panel")
         case .statistics: tr("学习统计", "Statistics")
+        case .roadmap: tr("学习路线图", "Study roadmap")
         case .previousPage: tr("上一页", "Previous page")
         case .nextPage: tr("下一页", "Next page")
         case .zoomIn: tr("放大", "Zoom in")
@@ -66,6 +67,7 @@ enum ShortcutAction: String, CaseIterable, Identifiable {
         case .toggleSidebar: KeyCombo("s", [.control, .command])
         case .toggleChat: KeyCombo("0", [.option, .command])
         case .statistics: KeyCombo("s", [.shift, .command])
+        case .roadmap: KeyCombo("m", [.shift, .command])
         case .previousPage: KeyCombo(KeyCombo.up, [.option, .command])
         case .nextPage: KeyCombo(KeyCombo.down, [.option, .command])
         case .zoomIn: KeyCombo("=", [.command])

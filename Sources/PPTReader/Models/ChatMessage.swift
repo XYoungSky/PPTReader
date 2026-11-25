@@ -33,6 +33,9 @@ struct ChatMessage: Codable, Identifiable, Equatable {
     var isAuto = false
     /// 一键讲解/自动讲解的目标页，用于判断某页是否已讲解过。
     var explainsPage: Int?
+    /// 用户消息是哪种操作（1.9 起记录），如 explainPage、selection.explain、question、quick.summary、continuation。
+    /// 路线图据此排除针对整份课件的操作。
+    var intent: String?
     var error: String?
     var stopped = false
     /// 回答达到长度上限被截断（1.6 起记录；可选类型以兼容旧记录）。
