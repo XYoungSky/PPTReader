@@ -307,7 +307,6 @@ private struct ProviderEditor: View {
     var body: some View {
         @Bindable var settings = settings
         let providerID = settings.activeProviderID
-        let isKimiCode = settings.activeProvider.kind == .kimiCode
         let kimiKeyMismatch = OpenAIClient.isKimiCodeKey(keyDraft) && !OpenAIClient.isKimiCode(settings.baseURL)
         VStack(alignment: .leading, spacing: 22) {
             SettingsCard {
@@ -341,8 +340,8 @@ private struct ProviderEditor: View {
                     HStack(spacing: 6) {
                         ThemedField(text: $settings.model, placeholder: tr("输入或选择模型", "Enter or choose a model"), monospaced: true)
                         PopMenuButton(trailing: true, style: IconButtonStyle(size: 30)) {
-                            settings.modelChoices.map { name in
-                                PopMenuItem(name, checked: name == settings.effectiveModel) { settings.model = name }
+                            settings.modelMenuChoices.map { name in
+                                PopMenuItem(name, checked: name == settings.effectiveModel, filterable: true) { settings.chooseModel(name) }
                             }
                         } label: {
                             Label(tr("选择模型", "Choose model"), systemImage: "chevron.up.chevron.down")
@@ -354,10 +353,7 @@ private struct ProviderEditor: View {
                 ContextWindowRow()
             }
 
-            SettingsCard(footer: isKimiCode ? tr(
-                "Kimi Code 会员订阅的 API Key 在 Kimi Code 控制台创建；海外账号请把地址改为 https://api.kimi.ai/coding/v1。会员权益面向编程场景，如果请求被拒绝，可以改用 Kimi 开放平台。",
-                "Create the key in the Kimi Code console. For international accounts, use https://api.kimi.ai/coding/v1. Membership benefits are meant for coding; if requests are refused, use the Kimi Platform instead."
-            ) : nil) {
+            SettingsCard(footer: providerFooter) {
                 if settings.activeProvider.kind.hasThinkingToggle {
                     SettingsRow(title: tr("深度思考", "Deep thinking"), detail: tr("更准确，但更慢", "More accurate, slower")) {
                         Toggle("", isOn: $settings.thinking)
@@ -375,11 +371,7 @@ private struct ProviderEditor: View {
                     }
                 }
                 if settings.activeProvider.kind.hasReasoningEffort {
-                    SettingsRow(title: tr("思考强度", "Thinking effort"), detail: tr("越高越准确，但更慢、更耗额度", "Higher is more accurate but slower and uses more quota")) {
-                        SegmentedPicker(selection: $settings.activeProvider.reasoningEffort,
-                                        options: ReasoningEffort.allCases.map { ($0, $0.title) })
-                            .accessibilityLabel(tr("思考强度", "Thinking effort"))
-                    }
+                    ReasoningEffortRow()
                 }
                 let notes = settings.detectionNotes
                 if !notes.isEmpty {
@@ -398,6 +390,19 @@ private struct ProviderEditor: View {
         }
         .animation(Motion.content, value: kimiKeyMismatch)
         .onAppear { keyDraft = settings.storedKey(for: providerID) }
+    }
+
+    private var providerFooter: String? {
+        switch settings.activeProvider.kind {
+        case .kimiCode:
+            tr("Kimi Code 会员订阅的 API Key 在 Kimi Code 控制台创建；海外账号请把地址改为 https://api.kimi.ai/coding/v1。会员权益面向编程场景，如果请求被拒绝，可以改用 Kimi 开放平台。",
+               "Create the key in the Kimi Code console. For international accounts, use https://api.kimi.ai/coding/v1. Membership benefits are meant for coding; if requests are refused, use the Kimi Platform instead.")
+        case .openRouter:
+            tr("API Key 在 openrouter.ai/settings/keys 创建。模型名带服务商前缀，例如 anthropic/…、openai/…、deepseek/…；测试连接后，在模型菜单里直接输入名称即可搜索。",
+               "Create a key at openrouter.ai/settings/keys. Model names carry a provider prefix such as anthropic/…, openai/… or deepseek/…. After testing the connection, type in the model menu to search.")
+        default:
+            nil
+        }
     }
 
     /// 地址换成 Kimi Code；原来的模型和模型列表属于别的服务商，一并换成 kimi-for-coding。
@@ -442,6 +447,43 @@ private struct ProviderEditor: View {
             }
         } catch {
             withAnimation(Motion.content) { testState = .failure(error.localizedDescription) }
+        }
+    }
+}
+
+/// 思考强度。选项少（Kimi Code）时用分段控件；OpenRouter 的选项多，放不下，改用下拉菜单。
+private struct ReasoningEffortRow: View {
+    @Environment(AppSettings.self) private var settings
+
+    var body: some View {
+        @Bindable var settings = settings
+        let kind = settings.activeProvider.kind
+        let options = kind.reasoningEfforts
+        // 改过接口类型后，保存的值可能不在新的选项里：显示为“默认”（请求里也不会发送）
+        let current = options.contains(settings.activeProvider.reasoningEffort) ? settings.activeProvider.reasoningEffort : .auto
+        let detail = kind == .openRouter
+            ? tr("越高越准确，但更慢、更耗额度。各模型支持的强度不同，“关闭”对必须思考的模型无效", "Higher is more accurate but slower and uses more credits. Models support different levels; Off has no effect on models that always reason")
+            : tr("越高越准确，但更慢、更耗额度", "Higher is more accurate but slower and uses more quota")
+        SettingsRow(title: tr("思考强度", "Thinking effort"), detail: detail) {
+            if options.count <= 4 {
+                SegmentedPicker(selection: $settings.activeProvider.reasoningEffort,
+                                options: options.map { ($0, $0.title) })
+                    .accessibilityLabel(tr("思考强度", "Thinking effort"))
+            } else {
+                PopMenuButton(trailing: true, style: OutlineButtonStyle()) {
+                    options.map { effort in
+                        PopMenuItem(effort.title, checked: effort == current) { settings.activeProvider.reasoningEffort = effort }
+                    }
+                } label: {
+                    HStack(spacing: 5) {
+                        Text(current.title)
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 8, weight: .bold))
+                    }
+                }
+                .fixedSize()
+                .accessibilityLabel(tr("思考强度", "Thinking effort"))
+            }
         }
     }
 }

@@ -4,7 +4,8 @@ import SwiftUI
 
 /// 自绘菜单项：与界面统一的圆角卡片菜单（替代系统灰色菜单）。
 struct PopMenuItem: Identifiable {
-    enum Kind { case action, separator, header }
+    /// note：不可选的说明文字（如“还有 N 项”“没有匹配项”）。
+    enum Kind { case action, separator, header, note }
 
     let id = UUID()
     var kind: Kind = .action
@@ -14,16 +15,19 @@ struct PopMenuItem: Identifiable {
     var checked = false
     var destructive = false
     var enabled = true
+    /// 参与输入过滤（例如模型列表）。不参与的项（服务商、设置入口）始终显示。
+    var filterable = false
     var action: () -> Void = {}
 
     init(_ title: String, icon: String? = nil, shortcut: String? = nil, checked: Bool = false,
-         destructive: Bool = false, enabled: Bool = true, action: @escaping () -> Void) {
+         destructive: Bool = false, enabled: Bool = true, filterable: Bool = false, action: @escaping () -> Void) {
         self.title = title
         self.icon = icon
         self.shortcut = shortcut
         self.checked = checked
         self.destructive = destructive
         self.enabled = enabled
+        self.filterable = filterable
         self.action = action
     }
 
@@ -34,6 +38,7 @@ struct PopMenuItem: Identifiable {
 
     static var separator: PopMenuItem { PopMenuItem(kind: .separator) }
     static func header(_ title: String) -> PopMenuItem { PopMenuItem(kind: .header, title: title) }
+    static func note(_ title: String) -> PopMenuItem { PopMenuItem(kind: .note, title: title) }
 
     var isSelectable: Bool { kind == .action && enabled }
 }
@@ -41,14 +46,88 @@ struct PopMenuItem: Identifiable {
 @MainActor
 @Observable
 final class PopMenuModel {
-    var items: [PopMenuItem]
+    /// 当前显示的项（过滤后）。
+    private(set) var items: [PopMenuItem]
     var highlighted: UUID?
     /// 菜单从哪个方向展开，用于出现动画的锚点。
     var anchor: UnitPoint
+    /// 可过滤的项多于上限时，菜单顶部显示搜索行，直接打字就能过滤。
+    let searchable: Bool
+    private(set) var query = ""
+    @ObservationIgnored private let allItems: [PopMenuItem]
+    @ObservationIgnored private let limit: Int
 
-    init(items: [PopMenuItem], anchor: UnitPoint) {
+    init(items: [PopMenuItem], anchor: UnitPoint, limit: Int) {
+        allItems = items
         self.items = items
         self.anchor = anchor
+        self.limit = limit
+        searchable = items.filter(\.filterable).count > limit
+        if searchable { refilter() }
+    }
+
+    func setQuery(_ text: String) {
+        guard searchable, text != query else { return }
+        query = text
+        refilter()
+    }
+
+    /// 按输入过滤可过滤的项：空格分开的每个词都要出现（不分大小写），最多显示 `limit` 项，其余提示继续输入。
+    private func refilter() {
+        let words = query.lowercased().split(separator: " ").map(String.init)
+        var result: [PopMenuItem] = []
+        var shown = 0, hidden = 0
+        /// 可过滤的项所在的位置（最后一个之后），说明文字插在这里。
+        var anchor: Int?
+        for item in allItems {
+            guard item.filterable else {
+                result.append(item)
+                continue
+            }
+            let title = item.title.lowercased()
+            if words.allSatisfy(title.contains) {
+                if shown < limit {
+                    result.append(item)
+                    shown += 1
+                } else {
+                    hidden += 1
+                }
+            }
+            anchor = result.count
+        }
+        if let anchor {
+            if shown == 0 {
+                result.insert(.note(tr("没有匹配的项", "No matches")), at: anchor)
+            } else if hidden > 0 {
+                result.insert(.note(tr("还有 \(hidden) 项，输入名称搜索", "\(hidden) more — type to search")), at: anchor)
+            }
+        }
+        items = Self.tidy(result)
+        let selectable = items.filter(\.isSelectable)
+        if !query.isEmpty {
+            highlighted = selectable.first(where: \.filterable)?.id
+        } else if let id = highlighted, !selectable.contains(where: { $0.id == id }) {
+            highlighted = nil
+        }
+    }
+
+    /// 去掉没有内容的标题，以及开头、结尾和连续的分隔线。
+    private static func tidy(_ items: [PopMenuItem]) -> [PopMenuItem] {
+        var result: [PopMenuItem] = []
+        for (index, item) in items.enumerated() {
+            switch item.kind {
+            case .header:
+                let next = items.dropFirst(index + 1).first
+                if next == nil || next?.kind == .separator || next?.kind == .header { continue }
+            case .separator:
+                if result.isEmpty || result.last?.kind == .separator { continue }
+            default:
+                break
+            }
+            result.append(item)
+        }
+        while result.last?.kind == .separator { result.removeLast() }
+        return result
     }
 
     func move(_ delta: Int) {
@@ -73,12 +152,19 @@ final class PopMenu {
 
     /// 菜单卡片四周为阴影预留的透明边距。
     private static let margin: CGFloat = 18
+    /// 可过滤的项多于这么多时，菜单可以打字搜索，并且只显示这么多项。
+    static let filterLimit = 12
+    /// 可搜索的菜单宽度固定，过滤时只变高度，不会左右跳动。
+    private static let searchableWidth: CGFloat = 340
 
     private var panel: MenuPanel?
     private var model: PopMenuModel?
     private var monitors: [Any] = []
     private var observers: [NSObjectProtocol] = []
     private var anchorRect: NSRect?
+    /// 卡片顶边（屏幕坐标）：过滤后高度变化时保持顶边不动。
+    private var cardTop: CGFloat = 0
+    private var hosting: NSView?
 
     var isShowing: Bool { panel != nil }
 
@@ -88,8 +174,9 @@ final class PopMenu {
 
         var anchor = UnitPoint.topLeading
         if case .below(_, let trailing) = placement { anchor = trailing ? .topTrailing : .topLeading }
-        let model = PopMenuModel(items: items, anchor: anchor)
-        let view = PopMenuView(model: model, minWidth: minWidth, margin: Self.margin) { [weak self] item in
+        let model = PopMenuModel(items: items, anchor: anchor, limit: Self.filterLimit)
+        let view = PopMenuView(model: model, minWidth: minWidth, fixedWidth: model.searchable ? Self.searchableWidth : nil,
+                               margin: Self.margin) { [weak self] item in
             self?.select(item)
         }
         let hosting = FirstMouseHostingView(rootView: view)
@@ -133,6 +220,8 @@ final class PopMenu {
 
         self.panel = panel
         self.model = model
+        self.hosting = hosting
+        cardTop = frame.maxY - Self.margin
         installMonitors(owner: window)
     }
 
@@ -145,6 +234,7 @@ final class PopMenu {
         self.panel = nil
         model = nil
         anchorRect = nil
+        hosting = nil
         let close = {
             panel.parent?.removeChildWindow(panel)
             panel.orderOut(nil)
@@ -155,6 +245,18 @@ final class PopMenu {
             panel.animator().alphaValue = 0
         } completionHandler: {
             MainActor.assumeIsolated { close() }
+        }
+    }
+
+    private func updateQuery(_ text: String) {
+        model?.setQuery(text)
+        // SwiftUI 在下一轮才按新的内容排版，之后再按新高度调整面板（顶边不动）
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let panel = self.panel, let hosting = self.hosting else { return }
+            let size = hosting.fittingSize
+            let height = size.height
+            let top = self.cardTop + Self.margin
+            panel.setFrame(NSRect(x: panel.frame.minX, y: top - height, width: panel.frame.width, height: height), display: true)
         }
     }
 
@@ -173,8 +275,18 @@ final class PopMenu {
             case 126: model.move(-1)
             case 36, 76:
                 if let item = model.items.first(where: { $0.id == model.highlighted }) { self.select(item) }
-            case 53: self.dismiss()
-            default: return event
+            case 53:
+                // 有输入时 Esc 先清空搜索
+                if model.searchable, !model.query.isEmpty { self.updateQuery("") } else { self.dismiss() }
+            case 51 where model.searchable:
+                self.updateQuery(String(model.query.dropLast()))
+            default:
+                // 可搜索的菜单：直接打字过滤（不带 ⌘ / ⌃ 的可见字符）
+                guard model.searchable, event.modifierFlags.isDisjoint(with: [.command, .control]),
+                      let text = event.characters, !text.isEmpty,
+                      text.unicodeScalars.allSatisfy({ !CharacterSet.controlCharacters.contains($0) && $0.value < 0xF700 })
+                else { return event }
+                self.updateQuery(model.query + text)
             }
             return nil
         } as Any)
@@ -218,12 +330,22 @@ final class FirstMouseHostingView<Content: View>: NSHostingView<Content> {
 private struct PopMenuView: View {
     let model: PopMenuModel
     let minWidth: CGFloat
+    /// 可搜索的菜单使用固定宽度。
+    let fixedWidth: CGFloat?
     let margin: CGFloat
     let onSelect: (PopMenuItem) -> Void
     @ViewState private var appeared = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 1) {
+            if model.searchable {
+                SearchRow(query: model.query)
+                Rectangle()
+                    .fill(Theme.border)
+                    .frame(height: 1)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 4)
+            }
             ForEach(model.items) { item in
                 switch item.kind {
                 case .separator:
@@ -239,6 +361,12 @@ private struct PopMenuView: View {
                         .padding(.horizontal, 10)
                         .padding(.top, 5)
                         .padding(.bottom, 3)
+                case .note:
+                    Text(item.title)
+                        .font(.system(size: 12))
+                        .foregroundStyle(Theme.text3)
+                        .padding(.horizontal, 10)
+                        .frame(height: 26)
                 case .action:
                     PopMenuRow(item: item, highlighted: model.highlighted == item.id) { hovering in
                         if hovering { model.highlighted = item.id } else if model.highlighted == item.id { model.highlighted = nil }
@@ -249,7 +377,7 @@ private struct PopMenuView: View {
             }
         }
         .padding(5)
-        .frame(minWidth: minWidth, alignment: .leading)
+        .frame(minWidth: fixedWidth ?? minWidth, maxWidth: fixedWidth, alignment: .leading)
         .fixedSize()
         .background(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
@@ -268,6 +396,43 @@ private struct PopMenuView: View {
         .onAppear {
             withAnimation(Motion.reduced ? nil : .timingCurve(0.2, 0.8, 0.2, 1, duration: 0.16)) { appeared = true }
         }
+    }
+}
+
+/// 可搜索菜单顶部的搜索行。菜单面板不会成为 key window，输入由 PopMenu 的键盘监听收集，这里只负责显示。
+private struct SearchRow: View {
+    let query: String
+
+    var body: some View {
+        HStack(spacing: 7) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 12))
+                .foregroundStyle(Theme.text3)
+                .frame(width: 16)
+            HStack(spacing: 1) {
+                if query.isEmpty {
+                    RoundedRectangle(cornerRadius: 0.5)
+                        .fill(Theme.accent)
+                        .frame(width: 1.5, height: 15)
+                    Text(tr("输入以搜索", "Type to search"))
+                        .foregroundStyle(Theme.text3)
+                } else {
+                    Text(query)
+                        .foregroundStyle(Theme.text)
+                        .lineLimit(1)
+                        .truncationMode(.head)
+                    RoundedRectangle(cornerRadius: 0.5)
+                        .fill(Theme.accent)
+                        .frame(width: 1.5, height: 15)
+                }
+            }
+            .font(.system(size: 13))
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 8)
+        .frame(height: 28)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(query.isEmpty ? tr("输入以搜索", "Type to search") : query)
     }
 }
 

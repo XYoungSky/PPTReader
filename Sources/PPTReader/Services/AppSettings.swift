@@ -9,7 +9,7 @@ struct ConnectionConfig: Sendable {
     var model: String
     /// 深度思考（仅对 DeepSeek 类型发送 `thinking` 参数，其他服务不认识这个参数）。
     var thinking: Bool
-    /// 思考强度（仅对 Kimi Code 类型发送 `reasoning_effort` 参数）。
+    /// 思考强度（仅对 Kimi Code、OpenRouter 类型发送）。
     var reasoningEffort: ReasoningEffort = .auto
     /// 缓存保留 1 小时（仅对支持的类型发送）。
     var longCache = false
@@ -19,6 +19,8 @@ struct ConnectionConfig: Sendable {
         switch kind {
         case .kimiPlatform: longCache ? 3_600 : 300
         case .kimiCode: 300
+        // 上游各家不同；Claude、OpenAI 的默认缓存都在 5 分钟左右
+        case .openRouter: 300
         case .deepSeek: nil
         case .custom: OpenAIClient.isOpenAI(baseURL) ? 300 : nil
         }
@@ -57,6 +59,7 @@ final class AppSettings {
         static let compactHistory = "context.compactHistory"
         static let chatFontSize = "ui.chatFontSize"
         static let chatSerif = "ui.chatSerif"
+        static let figureOpacity = "ui.figureOpacity"
     }
 
     @ObservationIgnored private let defaults: UserDefaults
@@ -94,6 +97,9 @@ final class AppSettings {
     var chatFontSize: Double { didSet { defaults.set(chatFontSize, forKey: Key.chatFontSize) } }
     /// 讲解正文使用衬线字体。
     var chatSerif: Bool { didSet { defaults.set(chatSerif, forKey: Key.chatSerif) } }
+    /// 图表预览窗口的不透明度（0.3…1），半透明时可以透过它对照课件。
+    var figureOpacity: Double { didSet { defaults.set(figureOpacity, forKey: Key.figureOpacity) } }
+    static let figureOpacityRange = 0.3...1.0
 
     @ObservationIgnored private var keyCache: [UUID: String] = [:]
     /// 也可以通过环境变量提供 Key（便于命令行启动和调试），在服务商没有保存 Key 时使用。
@@ -131,6 +137,8 @@ final class AppSettings {
         compactHistory = defaults.object(forKey: Key.compactHistory) as? Bool ?? true
         chatFontSize = defaults.object(forKey: Key.chatFontSize) as? Double ?? 15
         chatSerif = defaults.bool(forKey: Key.chatSerif)
+        figureOpacity = min(max(defaults.object(forKey: Key.figureOpacity) as? Double ?? 1, Self.figureOpacityRange.lowerBound),
+                            Self.figureOpacityRange.upperBound)
         let envKey = ProcessInfo.processInfo.environment["PPTREADER_API_KEY"]?.trimmingCharacters(in: .whitespacesAndNewlines)
         environmentKey = envKey?.isEmpty == false ? envKey : nil
         if migrated {
@@ -253,6 +261,25 @@ final class AppSettings {
     var modelChoices: [String] {
         var seen = Set<String>()
         return (activeProvider.fetchedModels + [effectiveModel]).filter { !$0.isEmpty && seen.insert($0).inserted }
+    }
+
+    /// 模型菜单里的顺序。模型多到要搜索时（如 OpenRouter 的几百个），当前模型和最近用过的排在前面，
+    /// 不输入也能直接选到；其余靠输入名称搜索。模型少时保持原来的顺序。
+    var modelMenuChoices: [String] {
+        let all = modelChoices
+        guard all.count > PopMenu.filterLimit else { return all }
+        let available = Set(all)
+        var seen = Set<String>()
+        let front = ([effectiveModel] + activeProvider.recentModels).filter { available.contains($0) && seen.insert($0).inserted }
+        return front + all.filter { !seen.contains($0) }
+    }
+
+    /// 从模型菜单里选择模型，并记进最近使用。直接在输入框里改模型名不算（每输入一个字都会触发）。
+    func chooseModel(_ name: String) {
+        model = name
+        var recent = activeProvider.recentModels.filter { $0 != name }
+        recent.insert(name, at: 0)
+        activeProvider.recentModels = Array(recent.prefix(6))
     }
 
     /// 实际请求使用的模型名，由用户填写或从接口返回的列表中选择。

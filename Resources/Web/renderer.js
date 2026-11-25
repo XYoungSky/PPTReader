@@ -684,14 +684,24 @@
   const $empty = document.getElementById('empty');
 
   // 公式优先在运算符处换行；矩阵等无法断行的内容缩放到可用宽度。
-  // 面板缩放、流式更新与字体加载后重新测量，避免裁掉公式或横向滚动。
+  // 新加入的公式在下一帧测量；面板宽度变化、字号变化与字体加载后全部重新测量，避免裁掉公式或横向滚动。
+  // 流式输出时每次只有新内容里的公式需要测量：每帧重测整个对话的所有公式会和滚动抢主线程。
   let mathLayoutQueued = false;
-  function scheduleMathLayout() {
+  let mathLayoutAll = false;
+  const mathLayoutPending = new Set();
+  function scheduleMathLayout(formulas) {
+    if (formulas) for (const formula of formulas) mathLayoutPending.add(formula);
+    else mathLayoutAll = true;
     if (mathLayoutQueued) return;
     mathLayoutQueued = true;
     requestAnimationFrame(() => {
       mathLayoutQueued = false;
-      const formulas = Array.from($thread.querySelectorAll('.katex'));
+      const formulas = mathLayoutAll
+        ? Array.from($thread.querySelectorAll('.katex'))
+        : Array.from(mathLayoutPending).filter((formula) => formula.isConnected);
+      mathLayoutAll = false;
+      mathLayoutPending.clear();
+      if (!formulas.length) return;
       for (const formula of formulas) formula.style.zoom = '1';
       const scales = formulas.map((formula) => {
         const container = formula.closest('.katex-display, td, th, p, li, .md');
@@ -704,9 +714,26 @@
       formulas.forEach((formula, index) => { formula.style.zoom = String(scales[index]); });
     });
   }
-  new ResizeObserver(scheduleMathLayout).observe($thread);
-  new MutationObserver(scheduleMathLayout).observe($thread, { childList: true, subtree: true });
-  document.fonts.addEventListener('loadingdone', scheduleMathLayout);
+  // 只关心宽度：回答变长时高度每帧都在变，不需要因此重测
+  let threadWidth = 0;
+  new ResizeObserver((entries) => {
+    const width = entries[entries.length - 1].contentRect.width;
+    if (Math.abs(width - threadWidth) < 0.5) return;
+    threadWidth = width;
+    scheduleMathLayout();
+  }).observe($thread);
+  new MutationObserver((records) => {
+    const added = [];
+    for (const record of records) {
+      for (const node of record.addedNodes) {
+        if (node.nodeType !== 1) continue;
+        if (node.classList.contains('katex')) added.push(node);
+        for (const formula of node.querySelectorAll('.katex')) added.push(formula);
+      }
+    }
+    if (added.length) scheduleMathLayout(added);
+  }).observe($thread, { childList: true, subtree: true });
+  document.fonts.addEventListener('loadingdone', () => scheduleMathLayout());
 
   const state = {
     meta: { title: '', pageCount: 0, currentPage: 0, hasDocument: false, hasKey: true },
@@ -714,6 +741,8 @@
     pending: new Map(),
     flushTimer: 0,
     stickToBottom: true,
+    /** 输出时自动跟到底部。用户往上滚动后关闭，回到底部或点“跳到底部”后恢复。 */
+    follow: true,
     animate: false,
   };
 
@@ -781,6 +810,114 @@
     }
   }
 
+  // ---------------------------------------------------------------- 流式输出：按块增量渲染
+  // 把正在输出的回答按顶层块（段落、列表、代码块、公式块、表格）切开：写完的块只渲染一次，之后 DOM 不再变；
+  // 每次只重新渲染最后那个还在增长的块。开销不再随回答长度增长。输出结束后整篇重新渲染一次，
+  // 兜住引用式链接这类跨块的写法，并画出 Mermaid 图。
+
+  /** 这段文字里的代码块、独立公式、数学环境和裸 SVG 是否都已闭合（未闭合时不能在它后面切块）。 */
+  function isClosed(text) {
+    let fence = null;
+    let display = false;
+    let bracket = 0;
+    let env = 0;
+    let svg = 0;
+    for (const line of text.split('\n')) {
+      if (fence) {
+        const m = /^\s*(`{3,}|~{3,})\s*$/.exec(line);
+        if (m && m[1][0] === fence[0] && m[1].length >= fence.length) fence = null;
+        continue;
+      }
+      const open = /^\s*(`{3,}|~{3,})/.exec(line);
+      if (open) {
+        fence = open[1];
+        continue;
+      }
+      const plain = line.replace(/`[^`]*`/g, ''); // 行内代码里的符号不算
+      if ((plain.match(/\$\$/g) || []).length % 2) display = !display;
+      // \\[2pt] 是公式里的换行，不是 \[
+      bracket += (plain.match(/(?<!\\)\\\[/g) || []).length - (plain.match(/(?<!\\)\\\]/g) || []).length;
+      for (const m of plain.matchAll(/\\(begin|end)\{([a-zA-Z]+)\*?\}/g)) {
+        if (MATH_ENVS.has(m[2])) env += m[1] === 'begin' ? 1 : -1;
+      }
+      svg += (plain.match(/<svg[\s>]/gi) || []).length - (plain.match(/<\/svg>/gi) || []).length;
+    }
+    return !fence && !display && bracket <= 0 && env <= 0 && svg <= 0;
+  }
+
+  /**
+   * 正在输出的文字里，最后一个还在增长的块从哪里开始（字符位置）；它之前的块都已写完。0 表示还不能切。
+   * 块的边界取 markdown-it 顶层 token 的起始行；最后一行可能还没写完（例如单独一个 # 之后可能接着写成段落），
+   * 从它开始的块不算。
+   */
+  function stableCut(src) {
+    const lines = src.split('\n');
+    if (lines.length < 3) return 0;
+    let tokens;
+    try {
+      tokens = md.parse(src, { streaming: true });
+    } catch (_) {
+      return 0;
+    }
+    const last = lines.length - 1;
+    const starts = [];
+    for (const token of tokens) {
+      if (token.level === 0 && token.nesting !== -1 && token.map && token.map[0] > 0 && token.map[0] < last) {
+        starts.push(token.map[0]);
+      }
+    }
+    for (let i = starts.length - 1; i >= 0; i--) {
+      const prefix = lines.slice(0, starts[i]).join('\n');
+      if (isClosed(prefix)) return prefix.length + 1;
+    }
+    return 0;
+  }
+
+  /** 把还在增长的那一块的节点从正文里取出来（用于复用其中的图片）。 */
+  function takeLive(stream) {
+    const frag = document.createDocumentFragment();
+    for (const node of stream.live) frag.append(node);
+    stream.live = [];
+    return frag;
+  }
+
+  function appendCaret(frag) {
+    const caret = document.createElement('span');
+    caret.className = 'caret';
+    const last = frag.lastElementChild;
+    if (last && /^(P|LI|H[1-6])$/.test(last.tagName)) last.append(caret);
+    else if (last && /^(UL|OL)$/.test(last.tagName) && last.lastElementChild) last.lastElementChild.append(caret);
+    else frag.append(caret);
+  }
+
+  function renderStreamingBody(entry, body, content) {
+    let stream = entry.stream;
+    if (!stream || !content.startsWith(stream.src)) {
+      // 第一次增量渲染，或者内容不是在原来的基础上追加的（重新生成等）：从头来
+      stream = entry.stream = { offset: 0, src: '', live: [] };
+      const old = document.createDocumentFragment();
+      old.append(...body.childNodes);
+      stream.live = Array.from(old.childNodes);
+    }
+    let tail = content.slice(stream.offset);
+    const cut = stableCut(tail);
+    if (cut > 0) {
+      const done = renderMarkdown(tail.slice(0, cut), { streaming: true });
+      reuseImages(takeLive(stream), done);
+      renderMermaidIn(done, true);
+      body.append(done);
+      stream.offset += cut;
+      stream.src = content.slice(0, stream.offset);
+      tail = tail.slice(cut);
+    }
+    const live = renderMarkdown(tail, { streaming: true });
+    reuseImages(takeLive(stream), live);
+    appendCaret(live);
+    renderMermaidIn(live, true);
+    stream.live = Array.from(live.childNodes);
+    body.append(live);
+  }
+
   function renderAssistant(entry, m) {
     if (!entry.built) {
       buildAssistant(entry);
@@ -806,10 +943,13 @@
     // 正文
     const body = el.querySelector('.content');
     if (content !== prev.content || m.streaming !== prev.streaming || m.status !== prev.status) {
-      const frag = renderMarkdown(content, { streaming: m.streaming });
-      reuseImages(body, frag);
-      if (m.streaming) {
-        if (!content.trim() && !reasoning.trim()) {
+      if (m.streaming && content.trim()) {
+        renderStreamingBody(entry, body, content);
+      } else {
+        entry.stream = null;
+        const frag = renderMarkdown(content, { streaming: m.streaming });
+        reuseImages(body, frag);
+        if (m.streaming && !reasoning.trim()) {
           const dots = document.createElement('div');
           dots.className = 'typing';
           dots.innerHTML = '<span></span><span></span><span></span>';
@@ -821,18 +961,11 @@
             status.textContent = m.status;
             frag.append(status);
           }
-        } else if (content.trim()) {
-          const caret = document.createElement('span');
-          caret.className = 'caret';
-          const last = frag.lastElementChild;
-          if (last && /^(P|LI|H[1-6])$/.test(last.tagName)) last.append(caret);
-          else if (last && /^(UL|OL)$/.test(last.tagName) && last.lastElementChild) last.lastElementChild.append(caret);
-          else frag.append(caret);
         }
+        body.replaceChildren(frag);
+        renderMermaidIn(body, m.streaming);
       }
-      body.replaceChildren(frag);
       body.hidden = !content.trim() && !m.streaming;
-      renderMermaidIn(body, m.streaming);
     }
 
     // 错误
@@ -906,7 +1039,10 @@
   // 网络按块到达，这里按帧逐步显示：积压越多走得越快，结束后迅速追平。
 
   const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
-  const reveal = { running: false, lastRender: 0 };
+  /** 两次渲染的最短间隔（ms）。渲染一次超过约 8ms 就拉长间隔，优先保证滚动帧率；变快后再缩回来。 */
+  const REVEAL_MIN_INTERVAL = 30;
+  const REVEAL_MAX_INTERVAL = 240;
+  const reveal = { running: false, lastRender: 0, interval: REVEAL_MIN_INTERVAL };
 
   function liveView(entry) {
     const full = entry.data.content || '';
@@ -923,9 +1059,10 @@
   }
 
   function revealTick(now) {
-    const due = now - reveal.lastRender >= 30;
-    const stick = isNearBottom();
+    const due = now - reveal.lastRender >= reveal.interval;
     let active = false;
+    let rendered = false;
+    const started = performance.now();
     for (const entry of state.entries.values()) {
       if (!entry.revealing) continue;
       const full = entry.data.content || '';
@@ -939,14 +1076,26 @@
       if (!entry.data.streaming && entry.shown >= full.length) {
         entry.revealing = false;
         renderAssistant(entry, entry.data);
+        rendered = true;
       } else {
-        if (due) renderAssistant(entry, liveView(entry));
+        if (due) {
+          renderAssistant(entry, liveView(entry));
+          rendered = true;
+        }
         active = true;
       }
     }
-    if (due) reveal.lastRender = now;
-    if (stick) scrollToBottom();
-    updateJumpButton();
+    if (due) {
+      reveal.lastRender = now;
+      const cost = performance.now() - started;
+      if (cost > 8) reveal.interval = Math.min(reveal.interval * 1.5, REVEAL_MAX_INTERVAL);
+      else if (cost < 4) reveal.interval = Math.max(reveal.interval * 0.85, REVEAL_MIN_INTERVAL);
+    }
+    // 只在内容变了的帧里写滚动位置：先渲染完（写），再读一次高度并滚到底
+    if (rendered) {
+      if (state.follow) scrollToBottom();
+      updateJumpButton();
+    }
     if (active) requestAnimationFrame(revealTick);
     else reveal.running = false;
   }
@@ -958,10 +1107,6 @@
   function distanceToBottom() {
     const doc = document.scrollingElement;
     return doc.scrollHeight - doc.scrollTop - window.innerHeight;
-  }
-
-  function isNearBottom() {
-    return distanceToBottom() < 100;
   }
 
   function scrollToBottom() {
@@ -977,14 +1122,38 @@
     $jump.classList.toggle('visible', state.entries.size > 0 && distanceToBottom() > 240);
   }
 
+  // 跟随底部由用户的操作决定，而不是每帧量一次离底部多远：
+  // 往上滚（滚轮、触控板、键盘、拖滚动条、拖选文字）就不再跟随；往下滚回到底部、点“跳到底部”或发出新提问后恢复。
+  function stopFollowing() { state.follow = false; }
+
+  window.addEventListener('wheel', (e) => {
+    if (e.deltaY < 0 && document.scrollingElement.scrollTop > 0) stopFollowing();
+  }, { passive: true });
+
+  window.addEventListener('keydown', (e) => {
+    if (e.target instanceof Element && e.target.closest('input, textarea, [contenteditable]')) return;
+    if (e.key === 'ArrowUp' || e.key === 'PageUp' || e.key === 'Home' || (e.key === ' ' && e.shiftKey)) stopFollowing();
+  });
+
+  let lastScroll = { top: 0, height: 0 };
   let scrollQueued = false;
   window.addEventListener('scroll', () => {
+    const doc = document.scrollingElement;
+    const top = doc.scrollTop;
+    const height = doc.scrollHeight;
+    // 内容没有变短、位置却往上走了：是用户在往上看（内容变短时浏览器会把位置往回收，那不算）
+    if (top < lastScroll.top - 2 && height >= lastScroll.height) stopFollowing();
+    else if (top > lastScroll.top && height - top - window.innerHeight < 16) state.follow = true;
+    lastScroll = { top, height };
     if (scrollQueued) return;
     scrollQueued = true;
     requestAnimationFrame(() => { scrollQueued = false; updateJumpButton(); });
   }, { passive: true });
 
-  $jump.addEventListener('click', smoothScrollToBottom);
+  $jump.addEventListener('click', () => {
+    state.follow = true;
+    smoothScrollToBottom();
+  });
 
   function scheduleFlush() {
     if (state.flushTimer) return;
@@ -994,12 +1163,12 @@
   function flush() {
     state.flushTimer = 0;
     const forced = state.stickToBottom;
-    const stick = forced || isNearBottom();
+    if (forced) state.follow = true;
     for (const m of state.pending.values()) renderEntry(m);
     state.pending.clear();
     updateEmpty();
     if (forced) smoothScrollToBottom();
-    else if (stick) scrollToBottom();
+    else if (state.follow) scrollToBottom();
     state.stickToBottom = false;
     updateJumpButton();
   }
@@ -1198,6 +1367,7 @@
     for (const entry of state.entries.values()) {
       if (entry.data.role === 'assistant') {
         entry.rendered = null;
+        entry.stream = null;
         renderAssistant(entry, entry.data);
       }
     }
@@ -1226,6 +1396,7 @@
       state.animate = true;
       emptyHTML = '';
       updateEmpty();
+      state.follow = true;
       scrollToBottom();
       replay($thread, 'fade');
       updateJumpButton();

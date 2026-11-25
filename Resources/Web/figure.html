@@ -8,6 +8,7 @@
 </head>
 <body>
   <div id="stage"><div id="card"></div></div>
+  <div id="drag-strip" aria-hidden="true"></div>
   <div id="toast" role="status" aria-live="polite"></div>
   <div id="toolbar" role="toolbar">
     <button type="button" data-cmd="zoom-out"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 8h9" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></button>
@@ -18,6 +19,11 @@
     <span class="sep" aria-hidden="true"></span>
     <button type="button" data-cmd="copy"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="5.25" y="5.25" width="8.25" height="8.25" rx="1.75" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M10.5 2.75H4.25a1.5 1.5 0 0 0-1.5 1.5v6.25" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg></button>
     <button type="button" data-cmd="save"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.5v7.5M4.75 7 8 10.25 11.25 7M3 12.75h10" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+    <span class="sep" aria-hidden="true"></span>
+    <label id="opacity" class="opacity">
+      <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="5.25" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M8 2.75a5.25 5.25 0 0 1 0 10.5Z" fill="currentColor"/></svg>
+      <input type="range" id="opacity-range" min="30" max="100" step="1" value="100">
+    </label>
   </div>
   <script src="figure.js"></script>
 </body>

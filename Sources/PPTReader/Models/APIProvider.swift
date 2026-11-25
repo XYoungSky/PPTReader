@@ -1,14 +1,19 @@
 import Foundation
 
-/// 思考强度，对应 Kimi Code 的 `reasoning_effort`。`auto` 表示不发送，由模型使用默认值。
+/// 思考强度，对应 Kimi Code 的 `reasoning_effort`、OpenRouter 的 `reasoning.effort`。`auto` 表示不发送，由模型使用默认值。
+/// 各服务商支持的取值不同，见 `ProviderPreset.reasoningEfforts`。
 enum ReasoningEffort: String, Codable, CaseIterable, Sendable {
-    case auto, low, high, max
+    case auto, none, minimal, low, medium, high, xhigh, max
 
     var title: String {
         switch self {
         case .auto: tr("默认", "Default")
+        case .none: tr("关闭", "Off")
+        case .minimal: tr("最少", "Minimal")
         case .low: tr("低", "Low")
+        case .medium: tr("中", "Medium")
         case .high: tr("高", "High")
+        case .xhigh: tr("很高", "Extra high")
         case .max: tr("最高", "Max")
         }
     }
@@ -23,7 +28,7 @@ struct APIProvider: Codable, Identifiable, Equatable, Sendable {
     var fetchedModels: [String]
     /// 深度思考（只对 DeepSeek 生效）。
     var thinking: Bool
-    /// 思考强度（只对 Kimi Code 生效）。
+    /// 思考强度（只对 Kimi Code、OpenRouter 生效）。
     var reasoningEffort: ReasoningEffort
     /// 是否已保存 Key。单独记录，避免启动时就去读钥匙串。
     var hasKey: Bool
@@ -40,6 +45,8 @@ struct APIProvider: Codable, Identifiable, Equatable, Sendable {
     var modelQuirks: [String: ModelQuirks]
     /// 缓存保留 1 小时（只对 Kimi 开放平台生效，默认 5 分钟）。
     var longCache: Bool
+    /// 最近从模型菜单里选过的模型（新的在前）。模型很多时（如 OpenRouter）排在菜单前面。
+    var recentModels: [String]
 
     init(id: UUID = UUID(), name: String, baseURL: String, model: String = "", kind: ProviderPreset? = nil, keyAccount: String? = nil) {
         self.id = id
@@ -48,6 +55,7 @@ struct APIProvider: Codable, Identifiable, Equatable, Sendable {
         self.kind = kind ?? ProviderPreset.detect(baseURL)
         modelQuirks = [:]
         longCache = true
+        recentModels = []
         self.model = model
         fetchedModels = []
         thinking = true
@@ -76,6 +84,7 @@ struct APIProvider: Codable, Identifiable, Equatable, Sendable {
         kind = (try? c.decodeIfPresent(ProviderPreset.self, forKey: .kind)) ?? ProviderPreset.detect(baseURL)
         modelQuirks = (try? c.decodeIfPresent([String: ModelQuirks].self, forKey: .modelQuirks)) ?? [:]
         longCache = (try? c.decodeIfPresent(Bool.self, forKey: .longCache)) ?? true
+        recentModels = (try? c.decodeIfPresent([String].self, forKey: .recentModels)) ?? []
     }
 
     /// 列表中显示的副标题：主机名 · 模型。
@@ -99,15 +108,25 @@ struct ModelQuirks: Codable, Equatable, Sendable {
 
 /// 服务商模板，同时也是保存下来的接口类型：创建时预填名称和地址，并决定发送哪些专有参数。
 enum ProviderPreset: String, Codable, CaseIterable, Identifiable, Sendable {
-    case deepSeek, kimiCode, kimiPlatform, custom
+    case deepSeek, kimiCode, kimiPlatform, openRouter, custom
 
     var id: Self { self }
 
     /// 支持 DeepSeek 的 `thinking` 开关。
     var hasThinkingToggle: Bool { self == .deepSeek }
 
-    /// 支持 Kimi Code 的 `reasoning_effort`。
-    var hasReasoningEffort: Bool { self == .kimiCode }
+    /// 可以调整思考强度：Kimi Code 发 `reasoning_effort`，OpenRouter 发 `reasoning: {effort}`。
+    var hasReasoningEffort: Bool { !reasoningEfforts.isEmpty }
+
+    /// 设置里可选的思考强度（含“默认”）。只发送这里列出的值，换了接口类型也不会发出对方不认识的取值。
+    var reasoningEfforts: [ReasoningEffort] {
+        switch self {
+        case .kimiCode: [.auto, .low, .high, .max]
+        // OpenRouter 文档列出的取值还有 minimal，只有少数模型支持，这里不提供
+        case .openRouter: [.auto, .none, .low, .medium, .high, .xhigh, .max]
+        default: []
+        }
+    }
 
     /// 支持用 `prompt_cache_options` 设置缓存保留时长（Kimi 开放平台：5m / 1h）。
     var hasCacheTTL: Bool { self == .kimiPlatform }
@@ -117,6 +136,7 @@ enum ProviderPreset: String, Codable, CaseIterable, Identifiable, Sendable {
         case .deepSeek: "DeepSeek"
         case .kimiCode: "Kimi Code"
         case .kimiPlatform: tr("Kimi 开放平台", "Kimi Platform")
+        case .openRouter: "OpenRouter"
         case .custom: tr("自定义", "Custom")
         }
     }
@@ -127,6 +147,7 @@ enum ProviderPreset: String, Codable, CaseIterable, Identifiable, Sendable {
         case .deepSeek: "DeepSeek"
         case .kimiCode: tr("Kimi Code（会员订阅）", "Kimi Code (membership)")
         case .kimiPlatform: tr("Kimi 开放平台（按量付费）", "Kimi Platform (pay-as-you-go)")
+        case .openRouter: tr("OpenRouter（一个 Key 用多家模型）", "OpenRouter (many providers, one key)")
         case .custom: tr("其他 OpenAI 兼容接口", "Other OpenAI-compatible API")
         }
     }
@@ -136,6 +157,7 @@ enum ProviderPreset: String, Codable, CaseIterable, Identifiable, Sendable {
         case .deepSeek: "https://api.deepseek.com"
         case .kimiCode: "https://api.kimi.com/coding/v1"
         case .kimiPlatform: "https://api.moonshot.cn/v1"
+        case .openRouter: "https://openrouter.ai/api/v1"
         case .custom: ""
         }
     }
@@ -150,6 +172,7 @@ enum ProviderPreset: String, Codable, CaseIterable, Identifiable, Sendable {
         if OpenAIClient.isDeepSeek(baseURL) { return .deepSeek }
         if OpenAIClient.isKimiCode(baseURL) { return .kimiCode }
         if baseURL.lowercased().contains("moonshot") { return .kimiPlatform }
+        if OpenAIClient.isOpenRouter(baseURL) { return .openRouter }
         return .custom
     }
 }

@@ -111,6 +111,9 @@ body.is-empty .edge-fade { display: none; }
 /* ---------------------------------------------------------------- 消息 */
 
 .msg { margin: 0 0 30px; min-width: 0; }
+/* 屏幕外的旧消息不参与布局和绘制（长对话滚动时省很多）；auto 会记住渲染过的真实高度，
+   没渲染过的先按 400px 估算。正在输出的总是最后一条，不加。 */
+.msg:not(:last-child) { content-visibility: auto; contain-intrinsic-size: auto 400px; }
 
 /* 进入：用户消息上浮，回答淡入；撤回：淡出收起 */
 .msg.user.enter { animation: rise 0.34s var(--ease-out) both; }

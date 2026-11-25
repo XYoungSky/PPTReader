@@ -543,7 +543,7 @@ final class ChatController {
         case .contextMenu(let info):
             showContextMenu(info)
         case .figure(let payload):
-            FigurePreview.shared.show(payload, from: web.webView.window)
+            FigurePreview.shared.show(payload, from: web.webView.window, settings: settings)
         }
     }
 

@@ -171,7 +171,7 @@ enum OpenAIClient {
         var maxTokens: Int?
         /// 这个模型不接受、不再发送的可选参数。
         var omit: Set<String> = []
-        /// 缓存路由键：同一份课件的请求带同一个键，服务商会尽量把它们发到同一份缓存（目前只对 OpenAI 发送）。
+        /// 缓存路由键：同一份课件的请求带同一个键，服务商会尽量把它们发到同一份缓存（只对 OpenAI、OpenRouter 发送）。
         var cacheKey: String?
     }
 
@@ -194,17 +194,24 @@ enum OpenAIClient {
         if config.kind.hasThinkingToggle {
             add("thinking", ["type": config.thinking ? "enabled" : "disabled"])
         }
-        // Kimi Code 用 reasoning_effort（low / high / max）调整思考强度；不设置时使用模型默认值
-        if config.kind.hasReasoningEffort, config.reasoningEffort != .auto {
-            add("reasoning_effort", config.reasoningEffort.rawValue)
+        // 思考强度：Kimi Code 用 reasoning_effort，OpenRouter 用统一的 reasoning.effort；不设置时使用模型默认值。
+        // 只发这个接口类型支持的取值（改过接口类型后，保存的值可能不在其中）
+        let effort = config.reasoningEffort
+        if effort != .auto, config.kind.reasoningEfforts.contains(effort) {
+            if config.kind == .openRouter {
+                add("reasoning", ["effort": effort.rawValue])
+            } else {
+                add("reasoning_effort", effort.rawValue)
+            }
         }
         // Kimi 开放平台的缓存默认只保留 5 分钟，学生在一页上停留稍久，下一问就要全价重算整份课件；
         // 改成 1 小时后首次写入贵一些，但之后一小时内的提问都能命中
         if config.kind.hasCacheTTL, config.longCache {
             add("prompt_cache_options", ["mode": "implicit", "ttl": "1h"])
         }
-        // OpenAI 按 prompt_cache_key 把请求路由到同一份缓存（Codex 用会话 ID）
-        if let key = options.cacheKey, isOpenAI(config.baseURL) {
+        // OpenAI 按 prompt_cache_key 把请求路由到同一份缓存（Codex 用会话 ID）；
+        // OpenRouter 没有 session_id 时用它做粘性路由，把同一份课件的请求发给同一家上游，缓存才能命中
+        if let key = options.cacheKey, isOpenAI(config.baseURL) || config.kind == .openRouter {
             add("prompt_cache_key", key)
         }
         return (try JSONSerialization.data(withJSONObject: body), optional)
@@ -218,6 +225,8 @@ enum OpenAIClient {
         let error: APIError
         let status: Int
         let retryAfter: Double?
+        /// 不值得重试（例如 OpenRouter 没有满足条件的上游）。
+        var permanent = false
     }
 
     /// - Parameter body: `makeBody` 组装好的请求体。
@@ -272,7 +281,8 @@ enum OpenAIClient {
                 if data.count > 32_000 { break }
             }
             let retryAfter = (http?.value(forHTTPHeaderField: "Retry-After")).flatMap { Double($0.trimmingCharacters(in: .whitespaces)) }
-            throw HTTPFailure(error: httpError(status, data, config), status: status, retryAfter: retryAfter)
+            throw HTTPFailure(error: httpError(status, data, config), status: status, retryAfter: retryAfter,
+                              permanent: isPermanent(status, data, config))
         }
 
         for try await line in bytes.lines {
@@ -285,7 +295,7 @@ enum OpenAIClient {
             }
             let choice = (json["choices"] as? [[String: Any]])?.first
             if let delta = choice?["delta"] as? [String: Any] {
-                if let reasoning = (delta["reasoning_content"] ?? delta["reasoning"]) as? String, !reasoning.isEmpty {
+                if let reasoning = reasoningText(in: delta), !reasoning.isEmpty {
                     emit(.reasoning(reasoning))
                 }
                 if let content = delta["content"] as? String, !content.isEmpty {
@@ -302,12 +312,21 @@ enum OpenAIClient {
         }
     }
 
+    /// 分片里的思考内容：DeepSeek、Kimi 放在 reasoning_content，OpenRouter 放在 reasoning；
+    /// OpenRouter 有时只给 reasoning_details 数组（text 或 summary，加密的 data 不显示）。
+    static func reasoningText(in delta: [String: Any]) -> String? {
+        if let text = (delta["reasoning_content"] ?? delta["reasoning"]) as? String, !text.isEmpty { return text }
+        guard let details = delta["reasoning_details"] as? [[String: Any]] else { return nil }
+        let text = details.compactMap { ($0["text"] ?? $0["summary"]) as? String }.joined()
+        return text.isEmpty ? nil : text
+    }
+
     /// 可以重试时返回等待的秒数：限流和服务端临时故障按 Retry-After 或指数退避，连接中断稍等即重试。
     /// 额度用尽、余额不足这类重试也没用的错误，以及要等很久的限流，直接报错。
     private static func retryDelay(for error: Error, attempt: Int) -> Double? {
         let backoff = 1.5 * pow(2, Double(attempt))
         if let failure = error as? HTTPFailure {
-            guard [408, 429, 500, 502, 503, 504, 529].contains(failure.status) else { return nil }
+            guard !failure.permanent, [408, 429, 500, 502, 503, 504, 529].contains(failure.status) else { return nil }
             if case .http(_, let message) = failure.error,
                ["quota", "balance", "insufficient", "billing", "余额", "额度"].contains(where: message.lowercased().contains) {
                 return nil
@@ -327,6 +346,11 @@ enum OpenAIClient {
     }
 
     /// 只用于从地址推断接口类型；发请求时按保存的类型判断。
+    static func isOpenRouter(_ baseURL: String) -> Bool {
+        baseURL.lowercased().contains("openrouter.ai")
+    }
+
+    /// 只用于从地址推断接口类型；发请求时按保存的类型判断。
     static func isDeepSeek(_ baseURL: String) -> Bool {
         baseURL.lowercased().contains("deepseek.com")
     }
@@ -342,13 +366,33 @@ enum OpenAIClient {
         key.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("sk-kimi-")
     }
 
-    /// 把非 2xx 响应转成错误；Kimi Code 的 Key 用错地址时给出明确提示。
-    private static func httpError(_ status: Int, _ data: Data, _ config: ConnectionConfig) -> APIError {
-        let message = errorMessage(from: data)
+    /// 把非 2xx 响应转成错误；Kimi Code 的 Key 用错地址时、OpenRouter 额度不足或没有可用上游时给出明确提示。
+    static func httpError(_ status: Int, _ data: Data, _ config: ConnectionConfig) -> APIError {
+        var message = errorMessage(from: data)
         if status == 401, isKimiCodeKey(config.apiKey), !isKimiCode(config.baseURL) {
             return .kimiCodeKeyMismatch(message)
         }
+        if config.kind == .openRouter {
+            var hint: String?
+            if status == 402 {
+                hint = tr("OpenRouter 账户额度不足，请到 openrouter.ai/settings/credits 充值后再试。",
+                          "Your OpenRouter credits have run out. Add credits at openrouter.ai/settings/credits and try again.")
+            } else if isPermanent(status, data, config) {
+                hint = tr("OpenRouter 上暂时没有满足条件的服务商可以处理这个模型。可以换一个模型，或稍后再试。",
+                          "No OpenRouter provider that meets the request's requirements is available for this model. Try another model, or try again later.")
+            }
+            if let hint { message = message.isEmpty ? hint : message + "\n" + hint }
+        }
         return .http(status, message)
+    }
+
+    /// 重试也没用的错误。OpenRouter 的 503 有两种：上游过载（metadata.error_type 为 provider_overloaded）
+    /// 稍后重试可能成功；没有满足条件的上游（换模型或改路由要求才行）重试只会白等。
+    static func isPermanent(_ status: Int, _ data: Data, _ config: ConnectionConfig) -> Bool {
+        guard config.kind == .openRouter, status == 503 else { return false }
+        let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        let metadata = (json?["error"] as? [String: Any])?["metadata"] as? [String: Any]
+        return (metadata?["error_type"] as? String) != "provider_overloaded"
     }
 
     private static func parseUsage(_ json: [String: Any]) -> TokenUsage {
@@ -367,7 +411,15 @@ enum OpenAIClient {
 
     private static func errorMessage(from data: Data) -> String {
         if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-            if let error = json["error"] as? [String: Any], let message = error["message"] as? String { return message }
+            if let error = json["error"] as? [String: Any], let message = error["message"] as? String {
+                // OpenRouter 转发上游的错误时，message 往往只是“Provider returned error”，具体原因在 metadata.raw。
+                // 一并带上，判断 400 的原因（图片、上下文长度、参数）时才看得到
+                if let raw = (error["metadata"] as? [String: Any])?["raw"] as? String,
+                   !raw.isEmpty, !message.contains(raw) {
+                    return message + "\n" + String(raw.prefix(500))
+                }
+                return message
+            }
             if let message = json["message"] as? String { return message }
         }
         return String(data: data.prefix(500), encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""

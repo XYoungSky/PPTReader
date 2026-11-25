@@ -100,8 +100,9 @@ private struct ModelMenu: View {
                     items += [.separator, .header(tr("模型", "Model"))]
                 }
             }
-            items += settings.modelChoices.map { name in
-                PopMenuItem(name, checked: name == settings.effectiveModel) { settings.model = name }
+            // 模型很多时（OpenRouter）菜单可以打字搜索，当前模型和最近用过的排在前面
+            items += settings.modelMenuChoices.map { name in
+                PopMenuItem(name, checked: name == settings.effectiveModel, filterable: true) { settings.chooseModel(name) }
             }
             if !items.isEmpty { items.append(.separator) }
             items.append(PopMenuItem(tr("模型设置…", "Model Settings…"), icon: "gearshape") { SettingsWindow.show() })

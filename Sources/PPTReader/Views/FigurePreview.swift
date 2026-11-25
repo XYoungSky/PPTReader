@@ -2,7 +2,7 @@ import AppKit
 import UniformTypeIdentifiers
 import WebKit
 
-/// 图表放大预览：浮在主窗口上方的面板，可以移动、调整大小，边看课件边参考。
+/// 图表放大预览：浮在主窗口上方的面板，可以移动、调整大小、调节透明度，边看课件边参考。
 @MainActor
 final class FigurePreview: NSObject {
     static let shared = FigurePreview()
@@ -13,14 +13,21 @@ final class FigurePreview: NSObject {
     private var pending: [String: Any]?
     private var title = ""
     private var exporting = false
+    /// 记住透明度用；由打开预览的一方传入。
+    private weak var settings: AppSettings?
 
     var isVisible: Bool { panel?.isVisible ?? false }
 
-    func show(_ payload: [String: Any], from parent: NSWindow?) {
+    func show(_ payload: [String: Any], from parent: NSWindow?, settings: AppSettings?) {
         let panel = self.panel ?? makePanel()
+        self.settings = settings
         title = (payload["title"] as? String) ?? ""
         panel.title = tr("图表预览", "Figure Preview")
         if !panel.isVisible { place(panel, payload: payload, over: parent) }
+        let opacity = settings?.figureOpacity ?? 1
+        panel.alphaValue = opacity
+        var payload = payload
+        payload["opacity"] = opacity
         pending = payload
         deliver()
         panel.makeKeyAndOrderFront(nil)
@@ -45,6 +52,9 @@ final class FigurePreview: NSObject {
         webView.onSmartMagnify = { [weak self] point in
             self?.evaluate("Figure.smartMagnify(\(point.x), \(point.y))")
         }
+        webView.onModifiersChanged = { [weak self] option in
+            self?.evaluate("Figure.setMoveMode(\(option))")
+        }
 
         let panel = FigurePanel(contentRect: NSRect(x: 0, y: 0, width: 800, height: 600),
                                 styleMask: [.titled, .closable, .resizable, .fullSizeContentView],
@@ -57,7 +67,7 @@ final class FigurePreview: NSObject {
         panel.isReleasedWhenClosed = false
         panel.isMovableByWindowBackground = false
         panel.backgroundColor = Theme.canvasNSColor
-        panel.minSize = NSSize(width: 380, height: 300)
+        panel.minSize = NSSize(width: 440, height: 300)
         panel.contentView = webView
         panel.onClose = { [weak self] in self?.pending = nil }
 
@@ -112,6 +122,12 @@ final class FigurePreview: NSObject {
             panel?.close()
         case "export":
             export(save: dict["action"] as? String == "save")
+        case "opacity":
+            guard let value = (dict["value"] as? NSNumber)?.doubleValue else { return }
+            let range = AppSettings.figureOpacityRange
+            let opacity = min(max(value, range.lowerBound), range.upperBound)
+            panel?.alphaValue = opacity
+            settings?.figureOpacity = opacity
         default:
             break
         }
@@ -232,10 +248,35 @@ final class FigurePanel: NSPanel {
     }
 }
 
-/// 把触控板捏合、智能缩放转发给网页，由网页自己缩放图表。
+/// 把触控板捏合、智能缩放转发给网页，由网页自己缩放图表；顶部拖动条和 ⌥ + 拖动用来移动窗口。
 final class FigureWebView: WKWebView {
+    /// 顶部这么高的区域用来拖动窗口（和标题栏同高，红绿灯在这一行）。与 figure.css 的 #drag-strip 一致。
+    static let dragStripHeight: CGFloat = 28
+
     var onMagnify: ((CGFloat, NSPoint) -> Void)?
     var onSmartMagnify: ((NSPoint) -> Void)?
+    /// ⌥ 按下 / 松开，网页据此切换光标。
+    var onModifiersChanged: ((Bool) -> Void)?
+    private var optionDown = false
+
+    /// 移动窗口要在原生端同步处理：`performDrag(with:)` 需要原始的按下事件，
+    /// 让网页 postMessage 通知过来时已经晚了。拖动窗口时不交给网页，图表也就不会跟着平移。
+    override func mouseDown(with event: NSEvent) {
+        let option = event.modifierFlags.contains(.option)
+        if let window, option || pagePoint(event).y < Self.dragStripHeight {
+            window.performDrag(with: event)
+            return
+        }
+        super.mouseDown(with: event)
+    }
+
+    override func flagsChanged(with event: NSEvent) {
+        super.flagsChanged(with: event)
+        let option = event.modifierFlags.contains(.option)
+        guard option != optionDown else { return }
+        optionDown = option
+        onModifiersChanged?(option)
+    }
 
     override func magnify(with event: NSEvent) {
         onMagnify?(event.magnification, pagePoint(event))

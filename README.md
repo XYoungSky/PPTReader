@@ -9,15 +9,15 @@ A lightweight macOS app for studying course slides with an AI tutor that has rea
 - **Read and ask side by side** — PDF, PowerPoint and Word (PPT/Word are converted by your installed Office; originals are never touched).
 - **Context-aware** — every question includes the whole deck's text, the page you're on, your selection and a screenshot of the page.
 - **Ways to ask** — explain this page · explain / translate / give examples for a selection · free questions · auto-explain on page turn.
-- **Rich answers** — Markdown, LaTeX, code, tables, SVG, Mermaid and inline HTML. Click any diagram to open it in a zoomable preview (pinch / ⌘-scroll, drag to pan) and copy or save it as PNG.
+- **Rich answers** — Markdown, LaTeX, code, tables, SVG, Mermaid and inline HTML. Click any diagram to open it in a zoomable preview (pinch / ⌘-scroll, drag to pan) and copy or save it as PNG. Move the preview by its top edge or by ⌥-dragging anywhere, and make it translucent to compare it with the slides.
 - **Explanation style** — choose how long answers are and how many diagrams and worked examples they include, and add your own instructions (e.g. "write out full derivations"). Open it from the AI panel's More menu.
 - **Statistics** — reading time, pages read, questions and token usage by day, deck, course and model (7 days / 30 days / all time), plus a GitHub-style heatmap of the past year. Each deck shows the course folder it belongs to; earlier chats are counted automatically.
 - **Cache-friendly requests** — a fixed system prompt (deck-independent instructions first, the deck last), append-only history and block-wise trimming with stable boundaries keep the provider's prefix cache hitting across a conversation, while text is still being OCR'd and when you page through a long deck.
 - **Study notes and study record** — write *About me* (applies to every deck) and *Course notes* (per course folder) under Settings → Study notes; both go into the system prompt. When a chat outgrows the context limit, the earlier messages are condensed into a study record instead of being dropped, so the tutor still knows what was covered, where you got stuck and which examples it used. The course folder itself is never modified.
 - **Context meter** — the ring at the top of the AI panel shows how much of the context window the last request used. Click it for a breakdown (instructions, notes, deck, study record, history, question, screenshot), the cache hit rate and cache writes, and a warning when the provider's cache has probably expired.
 - **Custom shortcuts** — rebind every menu command in Settings → Shortcuts.
-- **Any OpenAI-compatible API**, tuned for DeepSeek (`deepseek-flash` with vision, `deepseek-v4-pro`, thinking on/off), with support for the Kimi Code membership API (adjustable thinking effort).
-- **Multiple providers** — save up to 5 API configurations and switch between them in Settings or from the AI panel's model menu.
+- **Any OpenAI-compatible API**, tuned for DeepSeek (`deepseek-flash` with vision, `deepseek-v4-pro`, thinking on/off), with support for the Kimi Code membership API (adjustable thinking effort) and OpenRouter (many providers with one key, adjustable thinking effort).
+- **Multiple providers** — save up to 5 API configurations and switch between them in Settings or from the AI panel's model menu. With long model lists (such as OpenRouter's), just type in the model menu to search; recently used models come first.
 - Chinese / English UI, light and dark mode, ~7 MB native app.
 
 ## Requirements
@@ -28,7 +28,7 @@ A lightweight macOS app for studying course slides with an AI tutor that has rea
 
 ## Build
 
-For a prebuilt app, download `PPTReader-v1.6-macOS-arm64.zip` from the [v1.6 release](https://github.com/XYoungSky/PPTReader/releases/tag/v1.6), unzip it, and move `PPTReader.app` to Applications. This build requires an Apple Silicon Mac and macOS 14 or later. It uses an ad-hoc signature and is not notarized by Apple; macOS may block the first launch.
+For a prebuilt app, download `PPTReader-v1.7-macOS-arm64.zip` from the [v1.7 release](https://github.com/XYoungSky/PPTReader/releases/tag/v1.7), unzip it, and move `PPTReader.app` to Applications. This build requires an Apple Silicon Mac and macOS 14 or later. It uses an ad-hoc signature and is not notarized by Apple; macOS may block the first launch.
 
 To build from source:
 
@@ -45,7 +45,7 @@ Open **Settings** (⌘,) → **Model**. Use **Add Provider** to create one from 
 |---|---|
 | Name | any label |
 | Base URL | e.g. `https://api.deepseek.com` |
-| API type | set from the template or recognised URL; decides whether DeepSeek thinking or Kimi Code effort is sent. Pick it yourself when going through a proxy |
+| API type | set from the template or recognised URL; decides whether DeepSeek thinking or Kimi Code / OpenRouter effort is sent. Pick it yourself when going through a proxy |
 | API Key | your key (stored per provider in the Keychain); optional for local servers such as Ollama or LM Studio |
 | Model | Click **Test connection**, then choose a returned model, or enter a model ID supported by your provider |
 | Context window | taken from the API when it reports one, otherwise 128K is assumed; you can also pick it to match the provider's model docs |
@@ -61,6 +61,7 @@ For the Kimi Platform, **Keep cache for 1 hour** (on by default) asks Kimi to ke
 | DeepSeek | `https://api.deepseek.com` | thinking on/off |
 | Kimi Code (membership) | `https://api.kimi.com/coding/v1` (international: `https://api.kimi.ai/coding/v1`) | create the key in the Kimi Code console; default model `kimi-for-coding`; adjustable thinking effort |
 | Kimi Platform (pay-as-you-go) | `https://api.moonshot.cn/v1` | |
+| OpenRouter | `https://openrouter.ai/api/v1` | create the key at openrouter.ai/settings/keys; model names carry a provider prefix (e.g. `anthropic/…`); adjustable thinking effort; requests for the same deck go to the same upstream provider so the cache keeps hitting |
 | Other OpenAI-compatible API | your own | |
 
 > Kimi Code membership benefits are meant for coding, and Kimi may only accept requests from coding tools. If requests are refused (HTTP 403), use a Kimi Platform key instead.

@@ -18,6 +18,8 @@
   const $label = document.getElementById('zoom-label');
   const $toolbar = document.getElementById('toolbar');
   const $toast = document.getElementById('toast');
+  const $opacity = document.getElementById('opacity');
+  const $opacityRange = document.getElementById('opacity-range');
   const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
 
   /** 卡片内边距（自然尺寸下），四周留白与工具条占用的高度。 */
@@ -176,6 +178,16 @@
     command(button.dataset.cmd);
   });
 
+  // 透明度：拖动滑块时实时生效，Swift 端设置窗口透明度并记住
+  function showOpacity(percent) {
+    $opacity.title = `${t('不透明度', 'Opacity')}  ${percent}%`;
+  }
+  $opacityRange.addEventListener('input', () => {
+    const percent = Number($opacityRange.value);
+    showOpacity(percent);
+    post({ type: 'opacity', value: percent / 100 });
+  });
+
   function command(name) {
     switch (name) {
       case 'zoom-in': step(1); break;
@@ -192,6 +204,7 @@
     const mod = e.metaKey || e.ctrlKey;
     const key = e.key.toLowerCase();
     if (e.key === 'Escape') post({ type: 'close' });
+    else if (e.target === $opacityRange) return; // 方向键调节滑块，不平移图表
     else if (!view.ready) return;
     else if (mod && key === 'c') command('copy');
     else if (mod && key === 's') command('save');
@@ -247,6 +260,8 @@
       button.setAttribute('aria-label', name);
     }
     $toolbar.setAttribute('aria-label', t('图表工具', 'Figure tools'));
+    $opacityRange.setAttribute('aria-label', t('不透明度', 'Opacity'));
+    showOpacity(Number($opacityRange.value));
   }
 
   // ---------------------------------------------------------------- 对外接口
@@ -256,6 +271,7 @@
   window.Figure = {
     show(payload) {
       lang = payload.lang === 'en' ? 'en' : 'zh';
+      if (typeof payload.opacity === 'number') $opacityRange.value = String(Math.round(payload.opacity * 100));
       localize();
       view.ready = false;
       $card.className = '';
@@ -291,6 +307,11 @@
         img.src = payload.src || '';
         $card.append(img);
       }
+    },
+
+    /** 按住 ⌥ 时可以拖动窗口，换成移动光标（由 Swift 转发修饰键变化）。 */
+    setMoveMode(on) {
+      document.body.classList.toggle('move-mode', !!on);
     },
 
     /** 触控板捏合（由 Swift 转发 magnify 事件）。 */

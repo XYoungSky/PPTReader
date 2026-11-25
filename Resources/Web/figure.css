@@ -50,6 +50,20 @@ html, body {
 
 #stage.dragging { cursor: grabbing; }
 
+/* 顶部拖动条：鼠标按下由原生端拦截来移动窗口（高度与 FigureWebView.dragStripHeight 一致），这里只负责光标 */
+#drag-strip {
+  position: fixed;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 28px;
+  cursor: default;
+  z-index: 1;
+}
+
+/* 按住 ⌥ 时任意位置都能拖动窗口 */
+body.move-mode #stage, body.move-mode #stage.dragging { cursor: move; }
+
 #card {
   position: absolute;
   left: 0;
@@ -114,6 +128,24 @@ html, body {
 #toolbar button:focus-visible { outline: 2px solid rgba(217, 119, 87, 0.6); outline-offset: -2px; }
 #toolbar svg { width: 15px; height: 15px; }
 #zoom-label { min-width: 54px !important; }
+
+.opacity {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 8px 0 7px;
+  border-radius: 8px;
+  color: var(--fg-2);
+}
+.opacity:hover { color: var(--fg); }
+.opacity svg { flex: none; }
+.opacity input {
+  width: 76px;
+  margin: 0;
+  accent-color: #d97757;
+}
+.opacity input:focus-visible { outline: 2px solid rgba(217, 119, 87, 0.6); outline-offset: 2px; border-radius: 4px; }
 
 .sep { width: 1px; height: 16px; background: var(--hairline); margin: 0 4px; }
 
