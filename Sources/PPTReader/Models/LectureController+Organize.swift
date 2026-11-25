@@ -112,6 +112,7 @@ extension LectureController {
             do {
                 try await self.runOrganize(recording, paths: paths)
                 self.organizing[id] = nil
+                self.onOrganized?()
             } catch is CancellationError {
                 self.organizing[id] = nil
             } catch {

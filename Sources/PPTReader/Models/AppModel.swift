@@ -43,6 +43,7 @@ final class AppModel {
         tracker = StudyTracker(stats: stats)
         tracker.isBusy = { [weak chat] in chat?.isStreaming ?? false }
         lectures = LectureController(settings: settings, stats: stats)
+        lectures.onOrganized = { [weak self] in self?.refreshAnnotations() }
         lectures.context = { [weak self] in
             guard let self, let reader = self.reader else { return nil }
             return LectureController.Context(title: reader.title, coursePath: self.chat.course?.path,
@@ -136,6 +137,7 @@ final class AppModel {
                     RoadmapWindow.shared.progressDidChange()
                 }
                 self.phase = .ready(reader)
+                self.refreshAnnotations()
                 // 课程说明按课程文件夹保存：属于打开过的课程文件夹时用它，否则用课件所在的文件夹
                 let roots = [self.library.rootURL].compactMap { $0 } + self.library.recentFolders
                 let course = DeckLocation(path: thread.sourcePath, roots: roots).course
@@ -171,6 +173,34 @@ final class AppModel {
         guard FileManager.default.fileExists(atPath: url.path), selectedFile?.standardizedFileURL != url.standardizedFileURL else { return }
         pendingPage = page
         openDeck(url)
+    }
+
+    // MARK: - 课堂录音的批注
+
+    /// 按设置在打开的课件上显示（或去掉）录音整理出的批注。整理完、删除录音、切换开关后调用。
+    func refreshAnnotations() {
+        guard let reader else { return }
+        guard LectureController.isSupported, settings.showLectureAnnotations else {
+            LectureAnnotations.remove(from: reader.document)
+            return
+        }
+        LectureAnnotations.apply(LectureAnnotations.items(for: reader.sourceURL, store: .shared), to: reader.document)
+    }
+
+    /// 导出一份带录音批注的 PDF（原文件不变）。
+    func exportAnnotatedPDF() {
+        guard let reader else { return }
+        let items = LectureAnnotations.items(for: reader.sourceURL, store: .shared)
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = reader.title + tr("（带录音批注）", " (with lecture notes)") + ".pdf"
+        panel.allowedContentTypes = [.pdf]
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            try LectureAnnotations.exportCopy(of: reader.pdfURL, items: items, to: url)
+        } catch {
+            let alert = NSAlert(error: error)
+            alert.runModal()
+        }
     }
 
     func openInDefaultApp() {

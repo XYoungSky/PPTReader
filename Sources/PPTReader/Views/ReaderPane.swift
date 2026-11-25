@@ -459,6 +459,14 @@ struct PDFReaderView: NSViewRepresentable {
                     self?.reader.pageDidChange(to: document.index(for: page) + 1)
                 }
             })
+            // 点课件上的录音批注：打开「课堂录音」，跳到那一条录音的那个时间
+            observers.append(center.addObserver(forName: .PDFViewAnnotationHit, object: view, queue: .main) { note in
+                MainActor.assumeIsolated {
+                    guard let annotation = note.userInfo?["PDFAnnotationHit"] as? PDFAnnotation,
+                          let target = LectureAnnotations.target(of: annotation) else { return }
+                    RecordingsWindow.shared.show(select: target.recording, at: target.time)
+                }
+            })
             observers.append(center.addObserver(forName: .PDFViewSelectionChanged, object: view, queue: .main) { [weak self, weak view] _ in
                 MainActor.assumeIsolated {
                     guard let self else { return }

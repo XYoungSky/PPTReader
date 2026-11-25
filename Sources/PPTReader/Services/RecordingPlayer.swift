@@ -21,6 +21,8 @@ final class RecordingPlayer {
     private var endObserver: NSObjectProtocol?
     private var loading: Task<Void, Never>?
     private var loadedSegments: [Int] = []
+    /// 还没加载好时要跳到的位置。
+    private var pendingSeek: Double?
 
     init() {
         player.automaticallyWaitsToMinimizeStalling = false
@@ -58,7 +60,13 @@ final class RecordingPlayer {
                 MainActor.assumeIsolated { self?.ended() }
             }
             self.player.replaceCurrentItem(with: item)
-            if resume > 0 { await self.player.seek(to: CMTime(seconds: resume, preferredTimescale: 600)) }
+            let target = self.pendingSeek ?? resume
+            self.pendingSeek = nil
+            if target > 0 {
+                await self.player.seek(to: CMTime(seconds: target, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
+                self.state.time = target
+                self.onChange?(self.state)
+            }
         }
     }
 
@@ -80,6 +88,7 @@ final class RecordingPlayer {
     }
 
     func seek(to seconds: Double, thenPlay: Bool) {
+        if player.currentItem == nil { pendingSeek = max(0, seconds) }
         let time = CMTime(seconds: max(0, seconds), preferredTimescale: 600)
         player.seek(to: time, toleranceBefore: .zero, toleranceAfter: .zero)
         state.time = max(0, seconds)

@@ -170,13 +170,15 @@ final class RecordingsWindow: NSObject {
         }
     }
 
-    func show(select id: String? = nil) {
+    /// - Parameter time: 打开后跳到这一条录音的这个时间（点课件上的批注时）。
+    func show(select id: String? = nil, at time: Double? = nil) {
         let panel = self.panel ?? makePanel()
         if let id { selected = id }
         if !panel.isVisible { place(panel) }
         panel.makeKeyAndOrderFront(nil)
         panel.makeFirstResponder(webView)
         reload()
+        if let time { player.seek(to: time, thenPlay: false) }
         startTicker()
     }
 
@@ -428,6 +430,7 @@ final class RecordingsWindow: NSObject {
                 try? self.store.delete(id)
                 if self.selected == id { self.selected = nil }
                 self.reload()
+                SettingsWindow.model?.refreshAnnotations()
             }
         }
     }

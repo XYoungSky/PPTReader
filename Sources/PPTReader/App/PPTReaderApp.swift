@@ -154,6 +154,13 @@ struct AppCommands: Commands {
             }
             .disabled(!LectureController.isSupported || lectures.isRecording)
             Divider()
+            Toggle(tr("在课件上显示录音批注", "Show Lecture Notes on Slides"), isOn: Binding(
+                get: { settings.showLectureAnnotations },
+                set: { settings.showLectureAnnotations = $0; model.refreshAnnotations() }))
+                .disabled(!LectureController.isSupported)
+            Button(tr("导出带录音批注的 PDF…", "Export PDF with Lecture Notes…")) { model.exportAnnotatedPDF() }
+                .disabled(!LectureController.isSupported || reader == nil)
+            Divider()
             Button(tr("课堂录音", "Lectures")) { RecordingsWindow.shared.show() }
                 .keyboardShortcut(key(.recordings))
                 .disabled(!LectureController.isSupported)

@@ -63,6 +63,8 @@ final class LectureController {
     @ObservationIgnored let stats: StatsStore
     @ObservationIgnored let store: RecordingStore
     @ObservationIgnored var organizeTasks: [String: Task<Void, Never>] = [:]
+    /// 整理完一次录音后调用（刷新课件上的批注）。
+    @ObservationIgnored var onOrganized: (() -> Void)?
     /// 替换掉真正的模型调用（测试用）。
     @ObservationIgnored var completion: ((ModelTask, [[String: Any]]) async throws -> LLMTask.Output)?
     @ObservationIgnored private var captioner: AnyObject?

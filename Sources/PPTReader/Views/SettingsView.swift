@@ -1323,6 +1323,16 @@ private struct RecordingSettings: View {
                             detail: tr("到点前 5 分钟提醒，到点自动停止并保存", "A reminder 5 minutes before; stops and saves when reached")) {
                     SegmentedPicker(selection: $settings.recordingLimitHours, options: [1, 2, 3, 4, 6].map { ($0, tr("\($0) 小时", "\($0) h")) })
                 }
+                SettingsRow(title: tr("课件上的批注", "Notes on slides"),
+                            detail: tr("整理出的补充要点和课程安排显示在对应页的页边，点一下跳到录音；不改原文件", "Organized supplements and arrangements appear in the margin of their pages; click to jump to the recording. Files aren't changed")) {
+                    Toggle("", isOn: Binding(get: { settings.showLectureAnnotations }, set: { value in
+                        settings.showLectureAnnotations = value
+                        model.refreshAnnotations()
+                    }))
+                    .toggleStyle(.switch)
+                    .controlSize(.small)
+                    .labelsHidden()
+                }
                 SettingsRow(title: tr("实时字幕", "Live captions"), detail: tr("录音时在录音条上方显示", "Shown above the recording bar while recording")) {
                     Toggle("", isOn: Binding(get: { lectures.showsCaptions }, set: { lectures.showsCaptions = $0 }))
                         .toggleStyle(.switch)
