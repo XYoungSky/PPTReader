@@ -53,10 +53,10 @@ enum RecordingsPayload {
         return payload
     }
 
-    /// 整理结果：补充要点带上课件名，时间是录音时间。
+    /// 整理结果（补充要点和课程安排）：带上课件名，时间是录音时间。
     static func supplements(_ result: LectureOrganizer.Result) -> [[String: Any]] {
         result.supplements.map { item in
-            var entry: [String: Any] = ["point": item.point, "quote": item.quote, "t": item.time]
+            var entry: [String: Any] = ["kind": item.kind.rawValue, "point": item.point, "quote": item.quote, "t": item.time]
             if let deck = item.deck {
                 entry["deck"] = deck
                 entry["deckTitle"] = URL(fileURLWithPath: deck).deletingPathExtension().lastPathComponent
@@ -179,7 +179,7 @@ final class RecordingsWindow: NSObject {
             "items": recordings.map { recording in
                 let status = status(of: recording)
                 return RecordingsPayload.item(recording, status: status, elapsed: status == .recording ? elapsed : nil,
-                                              organized: store.notes(recording.id) != nil)
+                                              organized: store.organized(recording.id) != nil)
             },
         ])
         return recordings
@@ -199,7 +199,6 @@ final class RecordingsWindow: NSObject {
         }
         var payload = RecordingsPayload.detail(recording, lines: store.transcript(recording.id), status: status,
                                                queued: queued, duration: duration, live: live)
-        if let notes = store.notes(recording.id) { payload["notes"] = notes }
         if let result = store.organized(recording.id) { payload["supplements"] = RecordingsPayload.supplements(result) }
         if let state = lectures?.organizing[recording.id] {
             payload["organize"] = RecordingsPayload.organize(state, recordedDeck: recording.deckPath)
@@ -328,7 +327,7 @@ final class RecordingsWindow: NSObject {
         }
         let alert = NSAlert()
         alert.messageText = tr("删除“\(recording.title)”？", "Delete “\(recording.title)”?")
-        alert.informativeText = tr("录音、转写和整理结果都会删除，无法恢复。", "The audio, transcript and notes will be deleted. This can't be undone.")
+        alert.informativeText = tr("录音、转写和整理结果都会删除，无法恢复。", "The audio, transcript and organized results will be deleted. This can't be undone.")
         alert.alertStyle = .warning
         alert.addButton(withTitle: tr("删除", "Delete")).hasDestructiveAction = true
         alert.addButton(withTitle: tr("取消", "Cancel"))

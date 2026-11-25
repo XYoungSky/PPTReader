@@ -1,6 +1,6 @@
 import Foundation
 
-/// 「AI 整理」的流程：先判断相关课件让用户确认，再找补充要点、写笔记。每一步用对应任务的模型，用量计入统计。
+/// 「AI 整理」的流程：先判断相关课件让用户确认，再对照课件找补充要点和课程安排。每一步用对应任务的模型，用量计入统计。
 extension LectureController {
     /// 某次录音正在整理到哪一步（录音窗口据此显示）。
     enum OrganizeState: Equatable {
@@ -125,9 +125,7 @@ extension LectureController {
         let id = recording.id
         let lines = LectureOrganizer.timed(store.transcript(id), in: recording)
         guard !lines.isEmpty else { throw OrganizeFailure.noTranscript }
-        guard completion != nil || (settings.canRequest(.lectureSupplements) && settings.canRequest(.lectureNotes)) else {
-            throw OrganizeFailure.notConfigured
-        }
+        guard completion != nil || settings.canRequest(.lectureSupplements) else { throw OrganizeFailure.notConfigured }
         let english = Localizer.shared.isEnglish
 
         var decks: [LectureOrganizer.Deck] = []
@@ -140,76 +138,38 @@ extension LectureController {
         }
         let statsDeck = statsDeck(recording, decks: paths)
 
-        // 第 2 步：补充要点
-        var supplements: [LectureOrganizer.Supplement] = []
-        if !decks.isEmpty {
-            let config = settings.connection(for: .lectureSupplements)
-            let maxOutput = settings.outputCap(config.providerID, config.model, limit: 8_192)
-            let parts = LectureOrganizer.chunks(lines)
-            // 课件太长时缩短每页的字数，给转写留出地方
-            let deckBudget = budget(config, maxOutput: maxOutput) - 4_000
-            var pageLimit = 1_200
-            var system = LectureOrganizer.supplementSystem(decks: decks, pageLimit: pageLimit, english: english)
-            while TokenEstimate.of(system) > deckBudget, pageLimit > 150 {
-                pageLimit = pageLimit * 7 / 10
-                system = LectureOrganizer.supplementSystem(decks: decks, pageLimit: pageLimit, english: english)
-            }
-            for (index, part) in parts.enumerated() {
-                try Task.checkCancellation()
-                organizing[id] = .running(step: 2, message: tr("对照课件找补充要点（第 \(index + 1)/\(parts.count) 段）",
-                                                               "Comparing with the slides (part \(index + 1) of \(parts.count))"),
-                                          done: index, total: parts.count)
-                RecordingsWindow.shared.recordingsDidChange()
-                let messages = LectureOrganizer.supplementMessages(system: system, part: part, index: index + 1, total: parts.count,
-                                                                   english: english)
-                let output = try await complete(.lectureSupplements, messages, limit: 8_192, cacheKey: "lecture-\(id)", deck: statsDeck)
-                guard let items = LectureOrganizer.parseSupplements(output.text, decks: decks, part: part) else {
-                    throw OrganizeFailure.unreadable(truncated: output.truncated)
-                }
-                supplements += items
-            }
+        // 第 2 步：对照课件找补充要点和课程安排（没有课件时只找课程安排）
+        let config = settings.connection(for: .lectureSupplements)
+        let maxOutput = settings.outputCap(config.providerID, config.model, limit: 8_192)
+        let parts = LectureOrganizer.chunks(lines)
+        // 课件太长时缩短每页的字数，给转写留出地方
+        let deckBudget = budget(config, maxOutput: maxOutput) - 4_000
+        var pageLimit = 1_200
+        var system = LectureOrganizer.supplementSystem(decks: decks, pageLimit: pageLimit, english: english)
+        while TokenEstimate.of(system) > deckBudget, pageLimit > 150 {
+            pageLimit = pageLimit * 7 / 10
+            system = LectureOrganizer.supplementSystem(decks: decks, pageLimit: pageLimit, english: english)
         }
-        supplements.sort { $0.time < $1.time }
-
-        // 第 3 步：笔记
-        try Task.checkCancellation()
-        let config = settings.connection(for: .lectureNotes)
-        let maxOutput = settings.outputCap(config.providerID, config.model, limit: 16_384)
-        let offSlide = supplements.filter { $0.page == nil }
-        let titles = decks.map(\.title)
-        let available = budget(config, maxOutput: maxOutput) - TokenEstimate.of(offSlide.map(\.point).joined()) - 2_000
-        let parts = LectureOrganizer.parts(lines, budget: max(4_000, available))
-        func write(_ messages: [[String: Any]]) async throws -> String {
-            let output = try await complete(.lectureNotes, messages, limit: 16_384, cacheKey: nil, deck: statsDeck)
-            return LectureOrganizer.cleanNotes(output.text)
-        }
-        var notes: [String] = []
+        var items: [LectureOrganizer.Supplement] = []
         for (index, part) in parts.enumerated() {
             try Task.checkCancellation()
-            organizing[id] = .running(step: 3, message: parts.count > 1
-                                      ? tr("写课堂笔记（第 \(index + 1)/\(parts.count) 部分）", "Writing notes (part \(index + 1) of \(parts.count))")
-                                      : tr("写课堂笔记…", "Writing notes…"),
+            let what = decks.isEmpty ? tr("找课程安排", "Looking for course arrangements") : tr("对照课件找要点", "Comparing with the slides")
+            organizing[id] = .running(step: 2, message: parts.count > 1
+                                      ? tr("\(what)（第 \(index + 1)/\(parts.count) 段）", "\(what) (part \(index + 1) of \(parts.count))")
+                                      : what + "…",
                                       done: index, total: parts.count)
             RecordingsWindow.shared.recordingsDidChange()
-            notes.append(try await write(LectureOrganizer.notesMessages(
-                recording: recording, decks: titles, lines: part, supplements: offSlide, english: english,
-                part: parts.count > 1 ? (index + 1, parts.count) : nil)))
-        }
-        var merged = notes.first ?? ""
-        if notes.count > 1 {
-            organizing[id] = .running(step: 3, message: tr("合并笔记…", "Merging notes…"), done: parts.count, total: parts.count)
-            RecordingsWindow.shared.recordingsDidChange()
-            do {
-                merged = try await write(LectureOrganizer.mergeNotesMessages(recording: recording, parts: notes, english: english))
-            } catch is CancellationError {
-                throw CancellationError()
-            } catch {
-                // 合并失败时直接拼起来，各部分的内容都在
-                merged = notes.joined(separator: "\n\n")
+            let messages = LectureOrganizer.supplementMessages(system: system, part: part, index: index + 1, total: parts.count,
+                                                               english: english)
+            let output = try await complete(.lectureSupplements, messages, limit: 8_192, cacheKey: "lecture-\(id)", deck: statsDeck)
+            guard let found = LectureOrganizer.parseSupplements(output.text, decks: decks, part: part) else {
+                throw OrganizeFailure.unreadable(truncated: output.truncated)
             }
+            items += found
         }
+        items.sort { $0.time < $1.time }
         try Task.checkCancellation()
-        try store.saveOrganized(.init(decks: decks.map(\.path), supplements: supplements, createdAt: Date()), notes: merged, for: id)
+        try store.saveOrganized(.init(decks: decks.map(\.path), supplements: items, createdAt: Date()), for: id)
     }
 
     // MARK: - 工具

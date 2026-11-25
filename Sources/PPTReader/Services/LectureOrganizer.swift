@@ -1,10 +1,10 @@
 import Foundation
 import PDFKit
 
-/// 整理课堂录音（「AI 整理」）：
+/// 整理课堂录音（「AI 整理」）。不写整节课的笔记，只找两类东西：课件上没有的内容，和课程安排。
 /// 1. 判断这节课讲了课程文件夹里的哪几份课件（轻量模型，看转写摘录和各课件开头），列出来让用户确认；
-/// 2. 对每份确认的课件，按约 10 分钟一段，找出老师讲了、课件上没有的补充要点，对应到页（强模型；课件放在请求前部，各段共用缓存）；
-/// 3. 写整节课的笔记（强模型），课件以外的要点放进笔记。
+/// 2. 按约 10 分钟一段对照确认的课件，找出老师讲了、课件上没有的补充要点（对应到页），以及考试、作业、进度这些课程安排
+///    （强模型；所有课件放在请求前部，各段共用缓存）。没有勾选课件时只找课程安排。
 /// 这里只有组装请求、解析输出这些纯函数；调用模型的流程在 `LectureController`。
 enum LectureOrganizer {
     // MARK: - 数据
@@ -26,9 +26,17 @@ enum LectureOrganizer {
         var reason: String
     }
 
-    /// 一条补充要点。
+    /// 一条整理出来的要点。
     struct Supplement: Codable, Equatable, Sendable {
-        /// 课件路径；课件以外的要点为 nil。
+        enum Kind: String, Codable, Sendable {
+            /// 老师讲了、课件上没有的内容。
+            case supplement
+            /// 课程安排：考试、作业和截止日期、进度变化、分数构成、要读的材料、答疑时间等。
+            case arrangement
+        }
+
+        var kind: Kind
+        /// 课件路径；对不上任何一页时为 nil。
         var deck: String?
         /// 对应的页（从 1 开始）；对不上任何一页时为 nil。
         var page: Int?
@@ -37,9 +45,30 @@ enum LectureOrganizer {
         var quote: String
         /// 录音时间（秒）。
         var time: Double
+
+        init(kind: Kind = .supplement, deck: String?, page: Int?, point: String, quote: String, time: Double) {
+            self.kind = kind
+            self.deck = deck
+            self.page = page
+            self.point = point
+            self.quote = quote
+            self.time = time
+        }
+
+        private enum CodingKeys: String, CodingKey { case kind, deck, page, point, quote, time }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            kind = (try? c.decodeIfPresent(Kind.self, forKey: .kind)) ?? .supplement
+            deck = try c.decodeIfPresent(String.self, forKey: .deck)
+            page = try c.decodeIfPresent(Int.self, forKey: .page)
+            point = try c.decode(String.self, forKey: .point)
+            quote = try c.decodeIfPresent(String.self, forKey: .quote) ?? ""
+            time = try c.decodeIfPresent(Double.self, forKey: .time) ?? 0
+        }
     }
 
-    /// 存在录音文件夹的 `supplements.json`。笔记另存 `notes.md`。
+    /// 存在录音文件夹的 `supplements.json`。
     struct Result: Codable, Equatable, Sendable {
         var version = 1
         var decks: [String]
@@ -112,25 +141,6 @@ enum LectureOrganizer {
             }
             return text
         }.joined(separator: "…\n")
-    }
-
-    /// 按 token 预算把句子分成几部分（笔记太长时分部分写，再合并）。
-    static func parts(_ lines: [TimedLine], budget: Int) -> [[TimedLine]] {
-        var result: [[TimedLine]] = []
-        var current: [TimedLine] = []
-        var used = 0
-        for line in lines {
-            let tokens = TokenEstimate.of(line.text) + 4
-            if !current.isEmpty, used + tokens > budget {
-                result.append(current)
-                current = []
-                used = 0
-            }
-            current.append(line)
-            used += tokens
-        }
-        if !current.isEmpty { result.append(current) }
-        return result
     }
 
     // MARK: - 课件
@@ -242,21 +252,25 @@ enum LectureOrganizer {
         }.joined(separator: "\n\n")
     }
 
-    /// 前缀：说明 + 带页码的课件全文。各段请求共用，可以命中缓存。
+    /// 前缀：说明 + 带页码的课件全文。各段请求共用，可以命中缓存。没有课件时只找课程安排。
     static func supplementSystem(decks: [Deck], pageLimit: Int, english: Bool) -> String {
+        if decks.isEmpty { return arrangementSystem(english: english) }
         let courseware = courseware(decks, pageLimit: pageLimit, english: english)
         let several = decks.count > 1
         if english {
             return """
-            You help a student organize a recorded lecture taught in English. Below is the full text of the \(several ? "decks" : "deck") used in this lecture, with page numbers. I will then send the lecture transcript in parts, with timestamps.
-            Find what the lecturer said that is NOT on the slides: extra explanations, examples, analogies, wording that differs from the slides, exam hints, assignments or schedule changes, and common mistakes the lecturer warned about. Leave out anything the slides already say and anything merely read from the slides.
-            For each point:
+            You help a student go through a recorded lecture taught in English. Below is the full text of the \(several ? "decks" : "deck") used in this lecture, with page numbers. I will then send the lecture transcript in parts, with timestamps.
+            List only two kinds of things; the student doesn't need a summary of the lecture:
+            - "supplement": what the lecturer said that is NOT on the slides: extra explanations, examples, analogies, wording that differs from the slides, and common mistakes the lecturer warned about. Leave out anything the slides already say and anything merely read from the slides.
+            - "arrangement": anything about how the course runs: exams (dates, scope, format, what to focus on), assignments and deadlines, changes to the schedule or the room, grading, readings or preparation, office hours.
+            For each item:
+            - kind: "supplement" or "arrangement".
             - deck: the id of the deck it relates to.
             - page: the page of that deck it relates to most (an integer), or null if it matches no page.
-            - point: the point itself in English, one or two sentences.
+            - point: the item in English, one or two sentences; keep dates, times and numbers exactly as said.
             - quote: a short excerpt from the transcript that supports it.
             - start: when that excerpt starts, written as in the transcript, e.g. "12:05".
-            Output only JSON: {"supplements":[{"deck":1,"page":12,"point":"…","quote":"…","start":"12:05"}]}. If this part adds nothing beyond the slides, output {"supplements":[]}.
+            Output only JSON: {"items":[{"kind":"supplement","deck":1,"page":12,"point":"…","quote":"…","start":"12:05"}]}. If this part has neither, output {"items":[]}.
             The transcript comes from speech recognition and may contain misheard words; use the deck's terminology to make sense of it.
             <courseware>
             \(courseware)
@@ -265,18 +279,41 @@ enum LectureOrganizer {
         }
         return """
         你在帮学生整理一节英文授课的课堂录音。下面是这节课用到的\(several ? "几份" : "")课件全文，按页标出页码。之后我会分段发给你老师讲课的转写，每句前面是时间。
-        你的任务：找出老师讲了、但课件上没有的内容，包括补充的解释、例子、类比、和课件不同的说法、考试提示、作业或安排的变化、老师提醒的易错点。课件上已经写了的内容不要列出，照着课件念的也不要列出。
-        每条要点：
+        只列出两类内容，不需要概括这节课讲了什么：
+        - "supplement"（补充）：老师讲了、但课件上没有的内容，包括补充的解释、例子、类比、和课件不同的说法、老师提醒的易错点。课件上已经写了的内容不要列出，照着课件念的也不要列出。
+        - "arrangement"（课程安排）：和课程安排有关的内容，包括考试（时间、范围、题型、重点）、作业和截止日期、上课时间或地点的变动、分数构成、需要阅读或预习的材料、答疑时间。
+        每一条：
+        - kind："supplement" 或 "arrangement"。
         - deck：和哪份课件有关（课件的 id）。
         - page：和这份课件第几页最相关（整数）；和任何一页都对不上时写 null。
-        - point：用中文写的要点，一两句话，专业术语保留英文原文。
-        - quote：转写里能支持这条要点的原话（英文，简短摘录）。
+        - point：用中文写，一两句话，专业术语保留英文原文；日期、时间、数字照原话写。
+        - quote：转写里能支持这一条的原话（英文，简短摘录）。
         - start：这段原话开始的时间，照转写里的写法，例如 "12:05"。
-        只输出 JSON：{"supplements":[{"deck":1,"page":12,"point":"…","quote":"…","start":"12:05"}]}。这一段没有课件以外的内容时输出 {"supplements":[]}。
+        只输出 JSON：{"items":[{"kind":"supplement","deck":1,"page":12,"point":"…","quote":"…","start":"12:05"}]}。这一段两类内容都没有时输出 {"items":[]}。
         转写是语音识别的结果，可能有听错的词，请参照课件里的术语理解。
         <courseware>
         \(courseware)
         </courseware>
+        """
+    }
+
+    /// 没有课件可以对照：只找课程安排。
+    static func arrangementSystem(english: Bool) -> String {
+        if english {
+            return """
+            You help a student go through a recorded lecture taught in English. I will send the lecture transcript in parts, with timestamps.
+            List only what is about how the course runs: exams (dates, scope, format, what to focus on), assignments and deadlines, changes to the schedule or the room, grading, readings or preparation, office hours. Don't summarize the lecture content.
+            For each item: kind "arrangement"; page null; point: the item in English, one or two sentences, keeping dates, times and numbers exactly as said; quote: a short supporting excerpt from the transcript; start: when it starts, e.g. "12:05".
+            Output only JSON: {"items":[{"kind":"arrangement","page":null,"point":"…","quote":"…","start":"12:05"}]}. If this part has none, output {"items":[]}.
+            The transcript comes from speech recognition and may contain misheard words.
+            """
+        }
+        return """
+        你在帮学生整理一节英文授课的课堂录音。我会分段发给你老师讲课的转写，每句前面是时间。
+        只列出和课程安排有关的内容：考试（时间、范围、题型、重点）、作业和截止日期、上课时间或地点的变动、分数构成、需要阅读或预习的材料、答疑时间。不要概括讲课内容。
+        每一条：kind 写 "arrangement"；page 写 null；point 用中文写，一两句话，日期、时间、数字照原话写；quote 是转写里的原话（英文，简短摘录）；start 是原话开始的时间，例如 "12:05"。
+        只输出 JSON：{"items":[{"kind":"arrangement","page":null,"point":"…","quote":"…","start":"12:05"}]}。这一段没有时输出 {"items":[]}。
+        转写是语音识别的结果，可能有听错的词。
         """
     }
 
@@ -289,11 +326,12 @@ enum LectureOrganizer {
         ]
     }
 
-    /// 解析一段的补充要点：课件 id 缺省时是第一份；页码限制在那份课件内（越界的当作课件以外）；
-    /// 时间限制在这一段附近，读不出时用这一段的开头。
+    /// 解析一段的结果：类型认不出时当作补充；课件 id 缺省时是第一份；页码限制在那份课件内（越界的当作对不上任何一页）；
+    /// 时间限制在这一段附近，读不出时用这一段的开头。没有课件时都当作课程安排。
     static func parseSupplements(_ output: String, decks: [Deck], part: [TimedLine]) -> [Supplement]? {
         guard let json = jsonValue(output) else { return nil }
-        let list = ((json as? [String: Any])?["supplements"] as? [Any]) ?? (json as? [Any])
+        let object = json as? [String: Any]
+        let list = (object?["items"] as? [Any]) ?? (object?["supplements"] as? [Any]) ?? (json as? [Any])
         guard let list else { return nil }
         let start = part.first?.time ?? 0
         let end = part.last?.time ?? start
@@ -310,72 +348,11 @@ enum LectureOrganizer {
             var time = seconds(from: dict["start"] ?? dict["time"]) ?? start
             if time < start - 30 || time > end + 30 { time = start }
             let quote = (dict["quote"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            return Supplement(deck: page == nil ? nil : deck?.path, page: page, point: point, quote: quote, time: time)
+            let raw = (dict["kind"] as? String)?.lowercased() ?? ""
+            let kind: Supplement.Kind = decks.isEmpty || raw.hasPrefix("arrange") || raw.contains("安排") ? .arrangement : .supplement
+            if decks.isEmpty { page = nil }
+            return Supplement(kind: kind, deck: page == nil ? nil : deck?.path, page: page, point: point, quote: quote, time: time)
         }
-    }
-
-    // MARK: - 第 3 步：笔记
-
-    static func notesMessages(recording: Recording, decks: [String], lines: [TimedLine], supplements: [Supplement],
-                              english: Bool, part: (Int, Int)? = nil) -> [[String: Any]] {
-        let deckList = decks.isEmpty ? (english ? "(none)" : "（无）") : decks.joined(separator: english ? ", " : "、")
-        let extra = supplements.map { item -> String in
-            let page = item.page.map { english ? "page \($0)" : "第 \($0) 页" } ?? (english ? "not on the slides" : "课件以外")
-            return "- [\(clock(item.time))] (\(page)) \(item.point)"
-        }.joined(separator: "\n")
-        let system: String
-        if english {
-            system = """
-            You turn a recorded lecture taught in English into study notes for a student. Write Markdown:
-            1. Start with a short paragraph summarizing what the lecture covered.
-            2. Then follow the order of the lecture: one level-2 heading per part, with its start time in parentheses, e.g. "## Process scheduling (12:05)". Under each, write the key points as bullets. Mention briefly what is already on the slides (say which page, e.g. "see slide 12") and write out in more detail what the lecturer added.
-            3. A section "Beyond the slides" with what doesn't match any slide.
-            4. If the lecturer mentioned exams, assignments or deadlines, a section "Reminders".
-            Don't invent anything that isn't in the transcript. The transcript comes from speech recognition and may contain misheard words.
-            """
-        } else {
-            system = """
-            你在帮学生把一节英文授课的课堂录音整理成笔记。用 Markdown 写：
-            1. 开头一段话概括这节课讲了什么。
-            2. 然后按讲课的顺序分成几个部分，每部分一个二级标题，标题后面括号里写开始时间，例如“## 进程调度（12:05）”。下面用条目写要点：课件上已有的内容简要带过并注明页码（例如“见课件第 12 页”），老师补充的内容写详细。
-            3. 一节“课件以外”，写和课件对不上的内容。
-            4. 老师提到考试、作业、截止日期时，单独一节“提醒”。
-            用中文写，专业术语保留英文原文。不要编造转写里没有的内容。转写是语音识别的结果，可能有听错的词。
-            """
-        }
-        var user = english
-            ? "Lecture: \(recording.title). Decks: \(deckList)."
-            : "课程录音：\(recording.title)。相关课件：\(deckList)。"
-        if let part {
-            user += english
-                ? " This is part \(part.0) of \(part.1) of the transcript; write notes for this part only."
-                : "这是转写的第 \(part.0)/\(part.1) 部分，只整理这一部分。"
-        }
-        if !extra.isEmpty {
-            user += english ? "\n\nPoints beyond the slides found earlier:\n\(extra)" : "\n\n之前找出的课件以外的要点：\n\(extra)"
-        }
-        user += "\n\n<transcript>\n\(block(lines))\n</transcript>"
-        return [["role": "system", "content": system], ["role": "user", "content": user]]
-    }
-
-    /// 笔记分部分写了之后，合并成一份。
-    static func mergeNotesMessages(recording: Recording, parts: [String], english: Bool) -> [[String: Any]] {
-        let joined = parts.enumerated().map { "<part index=\"\($0.offset + 1)\">\n\($0.element)\n</part>" }.joined(separator: "\n\n")
-        let system = english
-            ? "Merge these partial notes of one lecture into a single set of notes in the same Markdown format: one summary paragraph at the top, parts in lecture order with their start times, then \"Beyond the slides\" and \"Reminders\" sections. Keep every concrete point; remove repetition. Don't add anything new."
-            : "把同一节课分部分写的笔记合并成一份，格式不变：开头一段概括，然后按讲课顺序的各部分（保留开始时间），最后是“课件以外”和“提醒”。保留所有具体的要点，去掉重复，不要添加新内容。"
-        let user = (english ? "Lecture: \(recording.title)\n\n" : "课程录音：\(recording.title)\n\n") + joined
-        return [["role": "system", "content": system], ["role": "user", "content": user]]
-    }
-
-    /// 去掉模型有时包在外面的代码块标记。
-    static func cleanNotes(_ output: String) -> String {
-        var text = output.trimmingCharacters(in: .whitespacesAndNewlines)
-        if text.hasPrefix("```") {
-            text = String(text.drop { $0 != "\n" }).trimmingCharacters(in: .whitespacesAndNewlines)
-            if text.hasSuffix("```") { text = String(text.dropLast(3)).trimmingCharacters(in: .whitespacesAndNewlines) }
-        }
-        return text
     }
 
     // MARK: - 工具
@@ -389,27 +366,21 @@ enum LectureOrganizer {
 }
 
 extension RecordingStore {
-    static let notesName = "notes.md"
-    static let supplementsName = "supplements.json"
-
-    func notes(_ id: String) -> String? {
-        try? String(contentsOf: folder(id).appendingPathComponent(Self.notesName), encoding: .utf8)
-    }
+    static let organizedName = "supplements.json"
 
     func organized(_ id: String) -> LectureOrganizer.Result? {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        guard let data = try? Data(contentsOf: folder(id).appendingPathComponent(Self.supplementsName)) else { return nil }
+        guard let data = try? Data(contentsOf: folder(id).appendingPathComponent(Self.organizedName)) else { return nil }
         return try? decoder.decode(LectureOrganizer.Result.self, from: data)
     }
 
     /// 保存整理结果，并在清单里记下相关课件。
-    func saveOrganized(_ result: LectureOrganizer.Result, notes: String, for id: String) throws {
+    func saveOrganized(_ result: LectureOrganizer.Result, for id: String) throws {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         encoder.dateEncodingStrategy = .iso8601
-        try encoder.encode(result).write(to: folder(id).appendingPathComponent(Self.supplementsName), options: .atomic)
-        try notes.write(to: folder(id).appendingPathComponent(Self.notesName), atomically: true, encoding: .utf8)
+        try encoder.encode(result).write(to: folder(id).appendingPathComponent(Self.organizedName), options: .atomic)
         try update(id) { $0.relatedDecks = result.decks }
     }
 }

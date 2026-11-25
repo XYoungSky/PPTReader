@@ -102,6 +102,7 @@ struct RecordingsWindowTests {
         ], createdAt: Date())
         let items = RecordingsPayload.supplements(result)
         #expect(items[0]["deckTitle"] as? String == "04" && items[0]["page"] as? Int == 3 && items[0]["t"] as? Double == 12)
+        #expect(items[0]["kind"] as? String == "supplement")
         #expect(items[1]["deck"] == nil && items[1]["page"] == nil)
         #expect(JSONSerialization.isValidJSONObject(items))
     }

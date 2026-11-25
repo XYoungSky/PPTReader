@@ -3,7 +3,8 @@ import Foundation
 import Testing
 @testable import PPTReader
 
-/// 课堂录音的「AI 整理」：转写的切分、找课件、请求内容、解析结果，以及用假的模型跑一遍完整流程。
+/// 课堂录音的「AI 整理」（只找课件上没有的内容和课程安排，不写笔记）：转写的切分、找课件、请求内容、解析结果，
+/// 以及用假的模型跑一遍完整流程。
 @Suite("课堂录音：AI 整理")
 @MainActor
 struct LectureOrganizerTests {
@@ -57,10 +58,6 @@ struct LectureOrganizerTests {
         let excerpt = O.excerpt(all, limit: 1_500)
         #expect(excerpt.count < 1_700)
         #expect(excerpt.contains("[00:00]") && excerpt.contains("[10:00]") && excerpt.contains("[20:00]"))
-
-        let budgeted = O.parts(all, budget: 200)
-        #expect(budgeted.count > 1)
-        #expect(budgeted.flatMap { $0 } == all)
     }
 
     // MARK: - 课件
@@ -135,44 +132,45 @@ struct LectureOrganizerTests {
         #expect(system.contains("【第 3 页】\n（这一页没有文字）"))
         #expect(!system.contains(String(repeating: "x", count: 1_001)))
         #expect(O.supplementSystem(decks: alignDecks, pageLimit: 100, english: true).contains("[Page 1]\nProcess states"))
+        #expect(system.contains("\"supplement\"") && system.contains("\"arrangement\"") && !system.contains("笔记"))
+        // 没有课件：只找课程安排，不带课件
+        let arrangements = O.supplementSystem(decks: [], pageLimit: 1_000, english: false)
+        #expect(arrangements.contains("课程安排") && !arrangements.contains("<courseware>"))
     }
 
-    @Test("读出补充要点：课件缺省是第一份；越界的页当作课件以外；时间读不出或离这一段太远时用段首")
+    @Test("读出结果：两种类型；课件缺省是第一份；越界的页当作对不上；时间读不出或离这一段太远时用段首；没有课件时都是课程安排")
     func parseSupplements() throws {
         let part = lines([600, 700, 1190])
         let output = """
         ```json
-        {"supplements":[
-          {"deck":2,"page":1,"point":"线程共享地址空间","quote":"threads share","start":"11:40"},
-          {"page":"2","point":"考试会考","quote":"exam","start":"99:00"},
+        {"items":[
+          {"kind":"supplement","deck":2,"page":1,"point":"线程共享地址空间","quote":"threads share","start":"11:40"},
+          {"kind":"arrangement","page":"2","point":"考试会考这一页","quote":"exam","start":"99:00"},
           {"deck":1,"page":40,"point":"课件外的例子","quote":"","start":620},
+          {"kind":"Arrangement","page":null,"point":"作业推迟到周五","start":"19:00"},
           {"page":1,"point":"  "}
         ]}
         ```
         """
         let items = try #require(O.parseSupplements(output, decks: alignDecks, part: part))
-        #expect(items.count == 3)
-        #expect(items[0] == O.Supplement(deck: "/c/b.pdf", page: 1, point: "线程共享地址空间", quote: "threads share", time: 700))
-        #expect(items[1].deck == "/c/a.pdf" && items[1].page == 2 && items[1].time == 600)
-        #expect(items[2].deck == nil && items[2].page == nil && items[2].time == 620)
+        #expect(items.count == 4)
+        #expect(items[0] == O.Supplement(kind: .supplement, deck: "/c/b.pdf", page: 1, point: "线程共享地址空间", quote: "threads share", time: 700))
+        #expect(items[1].kind == .arrangement && items[1].deck == "/c/a.pdf" && items[1].page == 2 && items[1].time == 600)
+        #expect(items[2].kind == .supplement && items[2].deck == nil && items[2].page == nil && items[2].time == 620)
+        #expect(items[3].kind == .arrangement && items[3].time == 1140)
+        // 旧的键名和顶层数组也认
+        #expect(O.parseSupplements(#"{"supplements":[{"point":"p"}]}"#, decks: alignDecks, part: part)?.count == 1)
         #expect(O.parseSupplements("[]", decks: alignDecks, part: part) == [])
         #expect(O.parseSupplements("no", decks: alignDecks, part: part) == nil)
+        // 没有课件：都当作课程安排，不带页码
+        let noDeck = try #require(O.parseSupplements(#"{"items":[{"kind":"supplement","page":3,"point":"p"}]}"#, decks: [], part: part))
+        #expect(noDeck == [O.Supplement(kind: .arrangement, deck: nil, page: nil, point: "p", quote: "", time: 600)])
     }
 
-    // MARK: - 第 3 步
-
-    @Test("笔记的请求带上课件以外的要点；分部分时说明是第几部分；去掉代码块标记")
-    func notes() throws {
-        let extra = [O.Supplement(deck: nil, page: nil, point: "Linux 用四级页表", quote: "", time: 65)]
-        let messages = O.notesMessages(recording: recording(), decks: ["a", "b"], lines: lines([5]), supplements: extra,
-                                       english: false, part: (2, 3))
-        let user = try #require(messages.last?["content"] as? String)
-        #expect(user.contains("相关课件：a、b"))
-        #expect(user.contains("第 2/3 部分"))
-        #expect(user.contains("- [01:05] (课件以外) Linux 用四级页表"))
-        #expect(user.contains("<transcript>\n[00:05] sentence at 5\n</transcript>"))
-        #expect(O.cleanNotes("```markdown\n# 笔记\n- a\n```") == "# 笔记\n- a")
-        #expect(O.cleanNotes("  ## 直接写的\n") == "## 直接写的")
+    @Test("旧格式的结果（没有类型）读出来当作补充")
+    func legacyKind() throws {
+        let item = try JSONDecoder().decode(O.Supplement.self, from: Data(#"{"deck":null,"page":2,"point":"p","quote":"q","time":3}"#.utf8))
+        #expect(item.kind == .supplement && item.page == 2)
     }
 
     @Test("整理结果存进录音文件夹，清单里记下相关课件")
@@ -180,11 +178,12 @@ struct LectureOrganizerTests {
         try await withDirectory { root in
             let store = RecordingStore(root: root)
             let r = try store.create(title: "r", coursePath: nil, deckPath: nil, locale: "en_US", bitRate: 32_000)
-            #expect(store.notes(r.id) == nil && store.organized(r.id) == nil)
-            let result = O.Result(decks: ["/c/a.pdf"], supplements: [O.Supplement(deck: "/c/a.pdf", page: 3, point: "p", quote: "q", time: 9)],
-                                  createdAt: Date(timeIntervalSince1970: 1_764_000_000))
-            try store.saveOrganized(result, notes: "# n", for: r.id)
-            #expect(store.notes(r.id) == "# n")
+            #expect(store.organized(r.id) == nil)
+            let result = O.Result(decks: ["/c/a.pdf"], supplements: [
+                O.Supplement(deck: "/c/a.pdf", page: 3, point: "p", quote: "q", time: 9),
+                O.Supplement(kind: .arrangement, deck: nil, page: nil, point: "exam", quote: "", time: 20),
+            ], createdAt: Date(timeIntervalSince1970: 1_764_000_000))
+            try store.saveOrganized(result, for: r.id)
             #expect(store.organized(r.id) == result)
             #expect(store.load(r.id)?.relatedDecks == ["/c/a.pdf"])
         }
@@ -192,7 +191,7 @@ struct LectureOrganizerTests {
 
     // MARK: - 完整流程
 
-    @Test("用假的模型跑一遍：找出两份课件让用户确认，逐段找补充要点，写笔记并保存")
+    @Test("用假的模型跑一遍：找出两份课件让用户确认，逐段找补充要点和课程安排，保存")
     func fullRun() async throws {
         try await withDirectory { root in
             let course = root.appendingPathComponent("OS")
@@ -230,13 +229,10 @@ struct LectureOrganizerTests {
                     // 列表顺序：录音时打开的那份所在的文件夹里，按名字排
                     #expect(user.contains("[2] 04-processes") && user.contains("[3] 05-scheduling"))
                     text = #"{"decks":[{"id":2,"reason":"PCB"},{"id":3,"reason":"round robin"}]}"#
-                case .lectureSupplements:
-                    text = user.contains(" 1/2")
-                        ? #"{"supplements":[{"deck":1,"page":1,"point":"PCB 存寄存器","quote":"The PCB","start":"00:05"},{"page":null,"point":"考试会考","quote":"exam","start":"06:40"}]}"#
-                        : #"{"supplements":[{"deck":2,"page":1,"point":"时间片","quote":"quantum","start":"10:10"}]}"#
                 default:
-                    #expect(user.contains("考试会考"))
-                    text = "```markdown\n## 笔记（00:05）\n- 要点\n```"
+                    text = user.contains(" 1/2")
+                        ? #"{"items":[{"kind":"supplement","deck":1,"page":1,"point":"PCB 存寄存器","quote":"The PCB","start":"00:05"},{"kind":"arrangement","page":null,"point":"考试会考","quote":"exam","start":"06:40"}]}"#
+                        : #"{"items":[{"kind":"supplement","deck":2,"page":1,"point":"时间片","quote":"quantum","start":"10:10"}]}"#
                 }
                 return LLMTask.Output(text: text, usage: nil, truncated: false)
             }
@@ -253,14 +249,14 @@ struct LectureOrganizerTests {
             controller.confirmOrganize(r.id, decks: [deckA.path, deckB.path])
             while controller.organizeTasks[r.id] != nil { await Task.yield() }
             #expect(controller.organizing[r.id] == nil)
-            #expect(calls.map(\.0) == [.lectureDecks, .lectureSupplements, .lectureSupplements, .lectureNotes])
+            #expect(calls.map(\.0) == [.lectureDecks, .lectureSupplements, .lectureSupplements])
 
             let result = try #require(store.organized(r.id))
             #expect(result.decks == [deckA.path, deckB.path])
             #expect(result.supplements.map(\.point) == ["PCB 存寄存器", "考试会考", "时间片"])
+            #expect(result.supplements.map(\.kind) == [.supplement, .arrangement, .supplement])
             #expect(result.supplements.map(\.time) == [5, 400, 610])
             #expect(result.supplements.last?.deck == deckB.path)
-            #expect(store.notes(r.id) == "## 笔记（00:05）\n- 要点")
             #expect(store.load(r.id)?.relatedDecks == [deckA.path, deckB.path])
         }
     }
@@ -278,11 +274,18 @@ struct LectureOrganizerTests {
             defer { defaults.removePersistentDomain(forName: name) }
             let controller = LectureController(settings: AppSettings(defaults: defaults),
                                                stats: StatsStore(fileURL: root.appendingPathComponent("Stats.json")), store: store)
-            controller.completion = { _, _ in LLMTask.Output(text: "{\"supplements\":", usage: nil, truncated: true) }
-            // 没有课件：只写笔记，模型的回答当作笔记原样保存
+            var answer = #"{"items":[{"kind":"arrangement","point":"周五交作业","start":"00:01"}]}"#
+            controller.completion = { _, messages in
+                #expect((messages.first?["content"] as? String)?.contains("<courseware>") == false)
+                return LLMTask.Output(text: answer, usage: nil, truncated: false)
+            }
+            // 没有课件：只找课程安排
             controller.confirmOrganize(r.id, decks: [])
             while controller.organizeTasks[r.id] != nil { await Task.yield() }
-            #expect(store.notes(r.id) == "{\"supplements\":")
+            #expect(store.organized(r.id)?.supplements.map(\.kind) == [.arrangement])
+
+            answer = "{\"items\":"
+            controller.completion = { _, _ in LLMTask.Output(text: answer, usage: nil, truncated: true) }
 
             // 对照课件时读不出 JSON：失败
             let deck = root.appendingPathComponent("a.pdf")

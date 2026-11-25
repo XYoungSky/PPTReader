@@ -538,7 +538,7 @@ mark {
 .live .text { margin: 0; font-size: 14.5px; line-height: 1.7; color: var(--fg-2); }
 .live .volatile { color: var(--muted); }
 
-/* 笔记 / 补充要点还没有时 */
+/* 补充要点 / 课程安排还没有时 */
 .placeholder {
   max-width: 420px;
   margin: 56px auto 0;
@@ -720,44 +720,6 @@ button.link:hover { background: var(--fill); color: var(--fg); }
 
 .deck-list summary:hover { background: var(--fill); }
 
-/* ---------- 笔记 ---------- */
-
-.notes {
-  max-width: 720px;
-  font-size: 14.5px;
-  line-height: 1.75;
-  color: var(--fg);
-}
-
-.notes h1, .notes h2, .notes h3 { font-family: var(--serif); font-weight: 600; line-height: 1.35; }
-.notes h1 { font-size: 21px; margin: 4px 0 12px; }
-.notes h2 { font-size: 17.5px; margin: 26px 0 8px; padding-bottom: 6px; border-bottom: 1px solid var(--hairline); }
-.notes h3 { font-size: 15.5px; margin: 20px 0 6px; }
-.notes p { margin: 8px 0; }
-.notes ul, .notes ol { margin: 6px 0; padding-left: 22px; }
-.notes li { margin: 3px 0; }
-.notes li::marker { color: var(--muted); }
-.notes strong { font-weight: 600; }
-.notes code { font: 0.88em var(--mono); padding: 1px 5px; border-radius: 4px; background: var(--fill-strong); }
-.notes pre { padding: 12px 14px; border-radius: 8px; background: var(--fill); overflow-x: auto; }
-.notes pre code { padding: 0; background: none; }
-.notes blockquote { margin: 10px 0; padding: 2px 0 2px 14px; border-left: 3px solid var(--accent-line); color: var(--fg-2); }
-.notes table { border-collapse: collapse; margin: 10px 0; font-size: 13.5px; }
-.notes th, .notes td { padding: 6px 10px; border: 1px solid var(--hairline-strong); text-align: left; }
-.notes th { background: var(--fill); font-weight: 600; }
-.notes .katex-display { margin: 10px 0; overflow-x: auto; }
-
-a.ts {
-  font: 500 0.82em var(--mono);
-  color: var(--accent);
-  text-decoration: none;
-  cursor: pointer;
-  border-radius: 3px;
-  padding: 0 2px;
-}
-
-a.ts:hover { background: var(--accent-soft); }
-
 /* ---------- 补充要点 ---------- */
 
 .supplements { max-width: 758px; }
@@ -815,3 +777,9 @@ button.page:hover { background: var(--accent-soft); color: var(--accent); }
 
 .ts-button svg { width: 8px; height: 8px; fill: currentColor; stroke: none; }
 .ts-button:hover { background: var(--accent-soft); color: var(--accent); }
+
+/* 课程安排：时间在左边，提到的页在右边 */
+.arrangements .supp { grid-template-columns: 76px minmax(0, 1fr) auto; }
+.arrangements .ts-button.lead { justify-self: start; color: var(--accent); background: var(--accent-soft); }
+.arrangements .page { white-space: nowrap; }
+.arrangements .supp:first-child { border-top: 0; }
