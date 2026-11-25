@@ -222,16 +222,13 @@ final class PDFController {
 
     /// 连续滚动时平滑滚到目标页，单页模式下淡入淡出切换。
     private func navigate(_ view: PDFView, to page: PDFPage) {
-        guard !Motion.reduced else {
+        let continuous = view.displayMode == .singlePageContinuous || view.displayMode == .twoUpContinuous
+        guard !Motion.reduced, continuous, let scrollView = view.documentView?.enclosingScrollView else {
+            crossfade(view, duration: 0.18)
             view.go(to: page)
             return
         }
-        if view.displayMode == .singlePageContinuous || view.displayMode == .twoUpContinuous,
-           smoothScroll(view, to: page) {
-            return
-        }
-        crossfade(view, duration: 0.18)
-        view.go(to: page)
+        smoothScroll(view, scrollView, to: page)
     }
 
     private func crossfade(_ view: PDFView, duration: CFTimeInterval) {
@@ -243,31 +240,28 @@ final class PDFController {
         layer.add(transition, forKey: "pageTransition")
     }
 
-    /// 距离太远（超过几屏）时返回 false，改用淡入淡出直接跳转。
-    private func smoothScroll(_ view: PDFView, to page: PDFPage) -> Bool {
-        guard let documentView = view.documentView, let scrollView = documentView.enclosingScrollView else { return false }
+    /// 先让 PDFView 自己跳到目标页：当前页立即更新（发出换页通知），也得到和直接跳转完全一样的位置；
+    /// 再在同一帧里回到原处、用动画滚过去。只用动画改滚动位置时，PDFView 不会更新当前页，
+    /// 路线图、AI 面板和上一页 / 下一页都会以为还停在原来那页。距离太远（超过几屏）时直接跳，加淡入淡出。
+    private func smoothScroll(_ view: PDFView, _ scrollView: NSScrollView, to page: PDFPage) {
         let clip = scrollView.contentView
-        let pageRect = documentView.convert(view.convert(page.bounds(for: view.displayBox), from: page), from: view)
-        let margin = view.pageBreakMargins.top
-        var origin = clip.bounds.origin
-        origin.y = documentView.isFlipped
-            ? pageRect.minY - margin
-            : pageRect.maxY + margin - clip.bounds.height
-        let maxY = max(documentView.frame.height - clip.bounds.height, 0)
-        origin.y = min(max(origin.y, 0), maxY)
-
-        let distance = abs(origin.y - clip.bounds.origin.y)
-        guard distance > 1 else { return true }
-        guard distance < clip.bounds.height * 5 else { return false }
-
+        let start = clip.bounds.origin
+        view.go(to: page)
+        let target = clip.bounds.origin
+        let distance = abs(target.y - start.y)
+        guard distance > 1 else { return }
+        guard distance < clip.bounds.height * 5 else {
+            crossfade(view, duration: 0.18)
+            return
+        }
+        clip.setBoundsOrigin(start)
         NSAnimationContext.runAnimationGroup { context in
             context.duration = min(0.45, 0.25 + Double(distance / clip.bounds.height) * 0.05)
             context.timingFunction = CAMediaTimingFunction(controlPoints: 0.2, 0.8, 0.2, 1)
             context.allowsImplicitAnimation = true
-            clip.animator().setBoundsOrigin(origin)
+            clip.animator().setBoundsOrigin(target)
         } completionHandler: {
             scrollView.reflectScrolledClipView(clip)
         }
-        return true
     }
 }
