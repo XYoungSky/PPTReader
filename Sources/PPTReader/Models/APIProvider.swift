@@ -17,6 +17,30 @@ enum ReasoningEffort: String, Codable, CaseIterable, Sendable {
         case .max: tr("最高", "Max")
         }
     }
+
+    /// 由低到高的次序；“默认”交给模型决定，没有次序。
+    var rank: Int? {
+        switch self {
+        case .auto: nil
+        case .none: 0
+        case .minimal: 1
+        case .low: 2
+        case .medium: 3
+        case .high: 4
+        case .xhigh: 5
+        case .max: 6
+        }
+    }
+
+    /// 不超过 `cap` 的强度：原来更高或是“默认”（推理模型默认往往很高）时取 `cap`，
+    /// 再落到服务商支持的、不高于它的最高一档（都更高时取支持的最低一档）。服务商不支持调节时原样返回。
+    static func capped(_ effort: ReasoningEffort, at cap: ReasoningEffort, supported: [ReasoningEffort]) -> ReasoningEffort {
+        let options = supported.filter { $0.rank != nil }
+        guard !options.isEmpty, let capRank = cap.rank else { return effort }
+        let target = effort.rank.map { min($0, capRank) } ?? capRank
+        if let best = options.filter({ $0.rank! <= target }).max(by: { $0.rank! < $1.rank! }) { return best }
+        return options.min(by: { $0.rank! < $1.rank! }) ?? effort
+    }
 }
 
 /// 一个保存好的接口服务商。API Key 不在这里，单独存放在钥匙串中。
@@ -208,7 +232,7 @@ enum ProviderPreset: String, Codable, CaseIterable, Identifiable, Sendable {
         case .deepSeek: "DeepSeek"
         case .kimiCode: tr("Kimi Code（会员订阅）", "Kimi Code (membership)")
         case .kimiPlatform: tr("Kimi 开放平台（按量付费）", "Kimi Platform (pay-as-you-go)")
-        case .openRouter: tr("OpenRouter（一个 Key 用多家模型）", "OpenRouter (many providers, one key)")
+        case .openRouter: tr("OpenRouter（统一接入多家模型）", "OpenRouter (many providers, one key)")
         case .custom: tr("其他 OpenAI 兼容接口", "Other OpenAI-compatible API")
         }
     }

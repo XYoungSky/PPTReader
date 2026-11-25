@@ -19,8 +19,8 @@ struct ModelSettings: View {
 private struct TaskModelSettings: View {
     var body: some View {
         SettingsCard(title: tr("按任务选择模型", "Models by task"),
-                     footer: tr("默认都跟随“讲解与提问”，也就是上方正在使用的服务商和 AI 面板里选的模型。换成别的模型后，这个任务单独使用缓存，命中率会低一些。",
-                                "Every task follows Explain & ask by default: the provider in use above and the model chosen in the AI panel. A task on another model keeps its own cache, so it hits the cache less often.")) {
+                     help: tr("默认均跟随「讲解与提问」。单独指定模型的任务使用独立缓存，命中率会降低。",
+                              "Tasks follow Explain & ask by default. A task with its own model uses a separate cache, which lowers the hit rate.")) {
             let tasks = ModelTask.allCases.filter(\.isAvailable)
             ForEach(tasks) { task in
                 TaskModelRow(task: task, last: task == tasks.last)
@@ -40,8 +40,9 @@ private struct TaskModelRow: View {
         let provider = ref.flatMap { ref in settings.providers.first { $0.id == ref.providerID } }
         let warning = warning(ref, provider)
         VStack(spacing: 0) {
-            SettingsRow(title: task.title, detail: task.strength.title + " · " + (warning ?? task.summary),
-                        detailColor: warning == nil ? Theme.text3 : Theme.danger, divider: !(last && provider == nil)) {
+            SettingsRow(title: task.title, detail: warning ?? task.strength.title,
+                        detailColor: warning == nil ? Theme.text3 : Theme.danger, help: help,
+                        divider: !(last && provider == nil)) {
                 if task.isConfigurable {
                     providerMenu(ref)
                 } else {
@@ -71,6 +72,13 @@ private struct TaskModelRow: View {
         .animation(Motion.content, value: warning)
     }
 
+    /// 悬停说明：任务做什么；跟随时思考强度有上限的，一并说明。
+    private var help: String {
+        guard let cap = task.effortCap else { return task.summary }
+        return task.summary + tr("\n跟随「讲解与提问」时，思考强度不超过「\(cap.title)」。",
+                                 "\nWhen following Explain & ask, thinking effort is capped at \(cap.title).")
+    }
+
     private var chatSummary: String {
         let model = settings.effectiveModel.isEmpty ? tr("未选择模型", "No model") : settings.effectiveModel
         return settings.activeProvider.name + " · " + model
@@ -79,14 +87,14 @@ private struct TaskModelRow: View {
     /// 设置里需要提醒的情况；没有时为空。
     private func warning(_ ref: ModelRef?, _ provider: APIProvider?) -> String? {
         if ref == nil, let removed = settings.taskFallbacks[task] {
-            return tr("“\(removed)”已删除，已改回跟随讲解与提问", "“\(removed)” was deleted, so this follows Explain & ask again")
+            return tr("“\(removed)”已删除，已恢复跟随「讲解与提问」", "“\(removed)” was deleted; following Explain & ask again")
         }
         guard let ref, let provider else { return nil }
         if ref.model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return tr("没有填写模型，暂时跟随讲解与提问", "No model entered; following Explain & ask for now")
+            return tr("未填写模型，暂时跟随「讲解与提问」", "No model entered; following Explain & ask")
         }
         if !settings.hasKey(for: provider.id) {
-            return tr("“\(provider.name)”还没有设置 API Key", "“\(provider.name)” has no API key yet")
+            return tr("“\(provider.name)”尚未设置 API Key", "“\(provider.name)” has no API key")
         }
         return nil
     }
@@ -98,7 +106,7 @@ private struct TaskModelRow: View {
                 settings.setTaskModel(nil, for: task)
             }]
             items.append(.separator)
-            items.append(.header(tr("单独选择服务商", "Use a provider")))
+            items.append(.header(tr("指定服务商", "Choose a provider")))
             items += settings.providers.map { provider in
                 PopMenuItem(provider.name.isEmpty ? tr("未命名", "Untitled") : provider.name, checked: ref?.providerID == provider.id) {
                     guard ref?.providerID != provider.id else { return }
@@ -202,8 +210,8 @@ private struct ProviderList: View {
 
     var body: some View {
         SettingsCard(title: tr("服务商", "Providers"),
-                     footer: tr("最多保存 \(AppSettings.maxProviders) 个服务商，点按即可切换；下方编辑的是正在使用的服务商。",
-                                "Save up to \(AppSettings.maxProviders) providers and click one to switch. The settings below apply to the provider in use.")) {
+                     help: tr("最多保存 \(AppSettings.maxProviders) 个服务商，点按切换。下方为当前服务商的设置。",
+                              "Save up to \(AppSettings.maxProviders) providers; click one to switch. The settings below apply to the one in use.")) {
             ForEach(settings.providers) { provider in
                 ProviderRow(provider: provider,
                             active: provider.id == settings.activeProviderID,
@@ -241,7 +249,7 @@ private struct ProviderList: View {
     private func confirmDelete(_ provider: APIProvider) {
         let settings = settings
         PopMenu.shared.show([
-            .header(tr("同时删除保存的 API Key", "Its saved API key is removed too")),
+            .header(tr("已保存的 API Key 将一并删除", "Its saved API key will also be removed")),
             PopMenuItem(tr("删除“\(provider.name)”", "Delete “\(provider.name)”"), icon: "trash", destructive: true) {
                 withAnimation(Motion.content) { settings.removeProvider(provider.id) }
             },
@@ -333,8 +341,8 @@ private struct ProviderEditor: View {
                         .frame(width: 300)
                 }
                 ProviderKindRow()
-                SettingsRow(title: "API Key") {
-                    ThemedField(text: $keyDraft, placeholder: OpenAIClient.isLocal(settings.baseURL) ? tr("本机服务可不填", "Optional for local servers") : "sk-…",
+                SettingsRow(title: "API Key", help: keyHelp) {
+                    ThemedField(text: $keyDraft, placeholder: OpenAIClient.isLocal(settings.baseURL) ? tr("本机服务可留空", "Optional for local servers") : "sk-…",
                                 secure: true, monospaced: true)
                         .frame(width: 300)
                         .onChange(of: keyDraft) { _, value in settings.setAPIKey(value, for: providerID) }
@@ -342,15 +350,15 @@ private struct ProviderEditor: View {
                 // Kimi Code 会员的 Key 填在了别的地址（常见于开放平台 api.moonshot.cn），请求会返回 401
                 if kimiKeyMismatch {
                     SettingsRow(title: tr("这是 Kimi Code 会员的 Key", "This is a Kimi Code membership key"),
-                                detail: tr("只能用于 Kimi Code 地址；开放平台需要在 platform.moonshot.cn 另外创建 Key",
-                                           "It only works with the Kimi Code URL. The Kimi Platform needs its own key from platform.moonshot.cn"),
-                                detailColor: Theme.danger) {
+                                detail: tr("仅适用于 Kimi Code 地址", "Works only with the Kimi Code URL"),
+                                detailColor: Theme.danger,
+                                help: tr("Kimi 开放平台需在 platform.moonshot.cn 另行创建 Key。", "The Kimi Platform needs its own key from platform.moonshot.cn.")) {
                         Button(tr("改用 Kimi Code 地址", "Use Kimi Code URL")) { useKimiCode() }
                             .buttonStyle(OutlineButtonStyle())
                     }
                     .transition(.opacity)
                 }
-                SettingsRow(title: tr("模型", "Model")) {
+                SettingsRow(title: tr("模型", "Model"), help: modelHelp) {
                     HStack(spacing: 6) {
                         ThemedField(text: $settings.model, placeholder: tr("输入或选择模型", "Enter or choose a model"), monospaced: true)
                         PopMenuButton(trailing: true, style: IconButtonStyle(size: 30)) {
@@ -368,9 +376,9 @@ private struct ProviderEditor: View {
                 ContextWindowRow()
             }
 
-            SettingsCard(footer: providerFooter) {
+            SettingsCard {
                 if settings.activeProvider.kind.hasThinkingToggle {
-                    SettingsRow(title: tr("深度思考", "Deep thinking"), detail: tr("更准确，但更慢", "More accurate, slower")) {
+                    SettingsRow(title: tr("深度思考", "Deep thinking"), detail: tr("更准确，响应更慢", "More accurate, slower")) {
                         Toggle("", isOn: $settings.thinking)
                             .toggleStyle(AccentToggleStyle())
                             .labelsHidden()
@@ -378,8 +386,9 @@ private struct ProviderEditor: View {
                 }
                 if settings.activeProvider.kind.hasCacheTTL {
                     SettingsRow(title: tr("缓存保留 1 小时", "Keep cache for 1 hour"),
-                                detail: tr("默认只保留 5 分钟；改为 1 小时后首次写入按 2 倍计费，之后一小时内的提问都按缓存价计算",
-                                           "The default is 5 minutes. With 1 hour the first write costs twice as much, but questions within the hour are billed at the cache rate")) {
+                                detail: tr("降低连续提问的费用", "Lowers the cost of follow-up questions"),
+                                help: tr("默认保留 5 分钟。改为 1 小时后，首次写入按 2 倍计费，此后一小时内按缓存价计费。",
+                                         "The default is 5 minutes. With 1 hour, the first write costs 2×; requests within the hour are billed at the cache rate.")) {
                         Toggle("", isOn: $settings.activeProvider.longCache)
                             .toggleStyle(AccentToggleStyle())
                             .labelsHidden()
@@ -390,8 +399,8 @@ private struct ProviderEditor: View {
                 }
                 if settings.activeProvider.kind.hasPrivacyRouting {
                     SettingsRow(title: tr("隐私", "Privacy"),
-                                detail: tr("只用不收集数据、或零数据保留的上游；限制越多可用的上游越少，有的模型可能会没有上游可用",
-                                           "Use only providers that don't collect data, or zero-retention endpoints. The stricter it is, the fewer providers qualify, and some models may have none")) {
+                                help: tr("仅使用不收集数据或零数据保留的上游。限制越严，可用上游越少，部分模型可能无法使用。",
+                                         "Use only upstream providers that don't collect or retain data. Stricter settings leave fewer providers; some models may become unavailable.")) {
                         SegmentedPicker(selection: $settings.activeProvider.privacy,
                                         options: ProviderPrivacy.allCases.map { ($0, $0.title) })
                             .accessibilityLabel(tr("隐私", "Privacy"))
@@ -400,7 +409,8 @@ private struct ProviderEditor: View {
                 let notes = settings.detectionNotes
                 if !notes.isEmpty {
                     SettingsRow(title: tr("自动检测到的限制", "Detected limits"),
-                                detail: notes.joined(separator: " · ") + tr("。换了模型版本或服务商修复后可以重置", ". Reset after the model or provider changes")) {
+                                detail: notes.joined(separator: " · "),
+                                help: tr("更换模型版本或服务商修复问题后，可重置。", "Reset after changing the model version or once the provider fixes the issue.")) {
                         Button(tr("重置", "Reset")) { withAnimation(Motion.content) { settings.resetDetection() } }
                             .buttonStyle(OutlineButtonStyle())
                     }
@@ -416,17 +426,23 @@ private struct ProviderEditor: View {
         .onAppear { keyDraft = settings.storedKey(for: providerID) }
     }
 
-    private var providerFooter: String? {
+    /// API Key 从哪里来：悬停 API Key 旁的 ⓘ 时显示。
+    private var keyHelp: String? {
         switch settings.activeProvider.kind {
         case .kimiCode:
-            tr("Kimi Code 会员订阅的 API Key 在 Kimi Code 控制台创建；海外账号请把地址改为 https://api.kimi.ai/coding/v1。会员权益面向编程场景，如果请求被拒绝，可以改用 Kimi 开放平台。",
-               "Create the key in the Kimi Code console. For international accounts, use https://api.kimi.ai/coding/v1. Membership benefits are meant for coding; if requests are refused, use the Kimi Platform instead.")
+            tr("在 Kimi Code 控制台创建。海外账号请将地址改为 https://api.kimi.ai/coding/v1。会员权益面向编程场景，请求被拒绝时请改用 Kimi 开放平台。",
+               "Create it in the Kimi Code console. International accounts use https://api.kimi.ai/coding/v1. The membership is meant for coding; if requests are refused, use the Kimi Platform.")
         case .openRouter:
-            tr("API Key 在 openrouter.ai/settings/keys 创建。模型名带服务商前缀，例如 anthropic/…、openai/…、deepseek/…；测试连接后，在模型菜单里直接输入名称即可搜索，右侧是每百万 token 的输入 / 输出价格（美元）。",
-               "Create a key at openrouter.ai/settings/keys. Model names carry a provider prefix such as anthropic/…, openai/… or deepseek/…. After testing the connection, type in the model menu to search; the right side shows input / output prices in USD per million tokens.")
+            tr("在 openrouter.ai/settings/keys 创建。", "Create one at openrouter.ai/settings/keys.")
         default:
             nil
         }
+    }
+
+    private var modelHelp: String? {
+        guard settings.activeProvider.kind == .openRouter else { return nil }
+        return tr("模型名带服务商前缀，如 anthropic/…、openai/…。测试连接后可在菜单中输入搜索；右侧为每百万 token 的输入 / 输出价格（美元）。",
+                  "Model names carry a provider prefix such as anthropic/… or openai/…. After testing the connection, type in the menu to search; prices on the right are input / output in USD per million tokens.")
     }
 
     /// 地址换成 Kimi Code；原来的模型和模型列表属于别的服务商，一并换成 kimi-for-coding。
@@ -444,9 +460,9 @@ private struct ProviderEditor: View {
         switch testState {
         case .idle: nil
         case .testing: nil
-        case .success(let count): tr("✓ 可用，\(count) 个模型", "✓ Connected, \(count) models")
-        case .reachable: tr("✓ 可用（接口未提供模型列表）", "✓ Connected (no model list provided)")
-        case .failure(let message): "✕ \(message)"
+        case .success(let count): tr("连接成功，共 \(count) 个模型", "Connected · \(count) models")
+        case .reachable: tr("连接成功（接口未提供模型列表）", "Connected (no model list)")
+        case .failure(let message): message
         }
     }
 
@@ -486,10 +502,10 @@ private struct ReasoningEffortRow: View {
         let options = kind.reasoningEfforts
         // 改过接口类型后，保存的值可能不在新的选项里：显示为“默认”（请求里也不会发送）
         let current = options.contains(settings.activeProvider.reasoningEffort) ? settings.activeProvider.reasoningEffort : .auto
-        let detail = kind == .openRouter
-            ? tr("越高越准确，但更慢、更耗额度。各模型支持的强度不同，“关闭”对必须思考的模型无效", "Higher is more accurate but slower and uses more credits. Models support different levels; Off has no effect on models that always reason")
-            : tr("越高越准确，但更慢、更耗额度", "Higher is more accurate but slower and uses more quota")
-        SettingsRow(title: tr("思考强度", "Thinking effort"), detail: detail) {
+        let help = kind == .openRouter
+            ? tr("各模型支持的强度不同；对必须思考的模型，“关闭”无效。", "Models support different levels; Off has no effect on models that always reason.")
+            : nil
+        SettingsRow(title: tr("思考强度", "Thinking effort"), detail: tr("越高越准确，响应越慢、费用越高", "Higher is more accurate, slower and costlier"), help: help) {
             if options.count <= 4 {
                 SegmentedPicker(selection: $settings.activeProvider.reasoningEffort,
                                 options: options.map { ($0, $0.title) })
@@ -520,8 +536,8 @@ private struct ProviderKindRow: View {
     var body: some View {
         let kind = settings.activeProvider.kind
         SettingsRow(title: tr("接口类型", "API type"),
-                    detail: tr("决定是否发送深度思考、思考强度等专有参数；经代理访问时按实际服务选择",
-                               "Decides whether provider-specific options such as thinking are sent; pick the real service when using a proxy")) {
+                    help: tr("决定是否发送深度思考、思考强度等专有参数。通过代理访问时，请按实际服务选择。",
+                             "Determines whether provider-specific options such as thinking are sent. Behind a proxy, choose the actual service.")) {
             PopMenuButton(trailing: true, style: OutlineButtonStyle()) {
                 ProviderPreset.allCases.map { preset in
                     PopMenuItem(preset.menuTitle, checked: preset == kind) { settings.activeProvider.kind = preset }
@@ -546,12 +562,11 @@ private struct ContextWindowRow: View {
         let manual = settings.activeProvider.contextWindow
         let detected = settings.detectedContextWindow
         let detail: String = if manual != nil {
-            tr("手动设置", "Set manually") + (detected.map { tr("，接口报告 ", "; the API reports ") + TokenEstimate.label($0) } ?? "")
+            tr("手动设置", "Set manually") + (detected.map { tr("（接口报告 ", " (API reports ") + TokenEstimate.label($0) + tr("）", ")") } ?? "")
         } else if let detected {
             tr("接口报告 ", "Reported by the API: ") + TokenEstimate.label(detected)
         } else {
-            tr("接口没有提供，按 \(TokenEstimate.label(AppSettings.defaultContextWindow)) 计算；可按服务商的模型说明修改",
-               "Not reported by the API, so \(TokenEstimate.label(AppSettings.defaultContextWindow)) is assumed. Check the provider's model docs to change it.")
+            tr("接口未提供，按 \(TokenEstimate.label(AppSettings.defaultContextWindow)) 计算", "Not reported; assuming \(TokenEstimate.label(AppSettings.defaultContextWindow))")
         }
         SettingsRow(title: tr("上下文窗口", "Context window"), detail: detail, divider: false) {
             PopMenuButton(trailing: true, style: OutlineButtonStyle()) {

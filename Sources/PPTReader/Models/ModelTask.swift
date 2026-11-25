@@ -37,9 +37,9 @@ enum ModelTask: String, Codable, CaseIterable, Identifiable, Sendable {
 
         var title: String {
             switch self {
-            case .strong: tr("建议用强模型", "Strong model suggested")
-            case .medium: tr("中等模型即可", "A mid-range model is enough")
-            case .light: tr("轻量模型即可", "A light model is enough")
+            case .strong: tr("建议使用强模型", "Strong model recommended")
+            case .medium: tr("中等模型即可", "Mid-range model is sufficient")
+            case .light: tr("轻量模型即可", "Light model is sufficient")
             }
         }
     }
@@ -66,13 +66,23 @@ enum ModelTask: String, Codable, CaseIterable, Identifiable, Sendable {
 
     var summary: String {
         switch self {
-        case .chat: tr("讲解本页、自由提问、选中和框选的操作", "Explaining pages, questions, and actions on selections and boxes")
-        case .autoExplain: tr("跟随时和讲解共用缓存", "Shares the cache with Explain & ask when following it")
-        case .record: tr("只做摘要；和讲解用的模型不同时，请求里不带课件全文", "Only summarizes; with a different model than Explain & ask, the deck text is left out")
-        case .roadmap: tr("读整份课件整理出结构；每份课件只生成一次，之后读缓存", "Reads the whole deck to map its structure; generated once per deck, then cached")
-        case .lectureDecks: tr("整理课堂录音的第 1 步：看转写摘录和各课件开头，判断讲了哪几份", "Organizing step 1: reads transcript excerpts and the start of each deck to find what was covered")
-        case .lectureTranscript: tr("第 2 步：参照课件改正转写里听错的术语、人名和数字；只返回改过的句子，输出很少", "Step 2: fixes misheard terms, names and numbers using the deck; only changed lines come back, so output stays small")
-        case .lectureSupplements: tr("第 3 步：逐段对照课件，找出课件上没有的内容和课程安排；课件放在请求前部，各段共用缓存", "Step 3: compares each part with the slides to find what isn't on them and anything about how the course runs; the deck comes first so the parts share the cache")
+        case .chat: tr("讲解当前页、提问，以及对选中文字和框选区域的操作。", "Page explanations, questions, and actions on selected text or boxed areas.")
+        case .autoExplain: tr("跟随「讲解与提问」时共用同一缓存。", "Shares the cache with Explain & ask when following it.")
+        case .record: tr("将较早的对话压缩为摘要。与讲解模型不同时，请求中不附带课件全文。", "Condenses earlier messages. With a model other than Explain & ask, the deck text is omitted.")
+        case .roadmap: tr("读取整份课件，整理知识结构。每份课件仅生成一次。", "Reads the whole deck to map its structure. Generated once per deck.")
+        case .lectureDecks: tr("课堂录音整理第 1 步：判断本节课涉及的课件。", "Lecture organizing, step 1: identifies the decks the lecture covered.")
+        case .lectureTranscript: tr("第 2 步：参照课件修正转写中识别错误的术语、人名和数字。", "Step 2: corrects misrecognized terms, names and numbers using the slides.")
+        case .lectureSupplements: tr("第 3 步：对照课件，找出课件以外的内容和课程安排。", "Step 3: finds content not on the slides and course arrangements.")
+        }
+    }
+
+    /// 跟随「讲解与提问」时的思考强度上限：整理、判断这类后台任务不需要和讲解一样深的思考，封顶后快得多也省钱。
+    /// 为空时完全跟随。单独选了模型的任务按用户的设置，不封顶。
+    var effortCap: ReasoningEffort? {
+        switch self {
+        case .chat, .autoExplain, .roadmap: nil
+        case .record, .lectureDecks, .lectureTranscript: .low
+        case .lectureSupplements: .high
         }
     }
 

@@ -31,11 +31,60 @@ struct TaskModelTests {
         return settings.providers.first { $0.id == provider.id }!
     }
 
+    /// 跟随讲解与提问：连接相同，思考参数按任务的上限封顶（`AppSettings.capped`）。
     private func expectFollowsChat(_ settings: AppSettings, _ task: ModelTask, sourceLocation: SourceLocation = #_sourceLocation) {
-        let config = settings.connection(for: task), chat = settings.connection
+        let config = settings.connection(for: task), chat = AppSettings.capped(settings.connection, for: task)
         #expect(config.providerID == chat.providerID && config.model == chat.model && config.baseURL == chat.baseURL
                 && config.kind == chat.kind && config.thinking == chat.thinking && config.reasoningEffort == chat.reasoningEffort,
                 sourceLocation: sourceLocation)
+    }
+
+    @Test("跟随讲解与提问时，后台任务的思考强度有上限：整理和判断最高“低”，补充要点最高“高”；单独选的模型不封顶")
+    func followingTasksCapEffort() {
+        withSettings { settings, _ in
+            let kimi = settings.addProvider(.kimiCode)!
+            settings.updateProvider(kimi.id) {
+                $0.model = "k3.1-pro"
+                $0.reasoningEffort = .max
+            }
+            #expect(settings.connection(for: .chat).reasoningEffort == .max)
+            #expect(settings.connection(for: .autoExplain).reasoningEffort == .max)
+            #expect(settings.connection(for: .roadmap).reasoningEffort == .max)
+            #expect(settings.connection(for: .record).reasoningEffort == .low)
+            #expect(settings.connection(for: .lectureDecks).reasoningEffort == .low)
+            #expect(settings.connection(for: .lectureTranscript).reasoningEffort == .low)
+            #expect(settings.connection(for: .lectureSupplements).reasoningEffort == .high)
+            // “默认”交给模型时也封顶（推理模型默认往往很高）
+            settings.updateProvider(kimi.id) { $0.reasoningEffort = .auto }
+            #expect(settings.connection(for: .chat).reasoningEffort == .auto)
+            #expect(settings.connection(for: .lectureSupplements).reasoningEffort == .high)
+            // 本来就低的不会被提高
+            settings.updateProvider(kimi.id) { $0.reasoningEffort = .low }
+            #expect(settings.connection(for: .lectureSupplements).reasoningEffort == .low)
+            // 单独选了模型的任务按用户的设置
+            settings.updateProvider(kimi.id) { $0.reasoningEffort = .max }
+            settings.setTaskModel(ModelRef(providerID: kimi.id, model: "k3.1-pro"), for: .lectureTranscript)
+            #expect(settings.connection(for: .lectureTranscript).reasoningEffort == .max)
+        }
+    }
+
+    @Test("上限是“低”的任务跟随时关掉 DeepSeek 的深度思考；讲解照常")
+    func followingTasksDisableThinking() {
+        withSettings { settings, _ in
+            settings.thinking = true
+            #expect(settings.connection(for: .chat).thinking)
+            #expect(!settings.connection(for: .lectureTranscript).thinking)
+            #expect(!settings.connection(for: .record).thinking)
+            #expect(settings.connection(for: .lectureSupplements).thinking)
+        }
+    }
+
+    @Test("封顶后落到服务商支持的档位；不支持调节的服务商原样返回")
+    func cappedToSupportedLevel() {
+        #expect(ReasoningEffort.capped(.max, at: .medium, supported: ProviderPreset.kimiCode.reasoningEfforts) == .low)
+        #expect(ReasoningEffort.capped(.xhigh, at: .high, supported: ProviderPreset.openRouter.reasoningEfforts) == .high)
+        #expect(ReasoningEffort.capped(.none, at: .low, supported: ProviderPreset.openRouter.reasoningEfforts) == .none)
+        #expect(ReasoningEffort.capped(.max, at: .low, supported: []) == .max)
     }
 
     @Test("什么都不改时，所有任务都跟随讲解与提问")

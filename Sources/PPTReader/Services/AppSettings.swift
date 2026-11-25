@@ -424,11 +424,20 @@ final class AppSettings {
 
     /// 某个任务的连接。没有单独选模型、选的服务商已不存在或没填模型时，跟随“讲解与提问”。
     func connection(for task: ModelTask) -> ConnectionConfig {
-        guard let chosen = resolved(task) else { return connection }
+        guard let chosen = resolved(task) else { return Self.capped(connection, for: task) }
         let (provider, ref) = chosen
         return connection(provider, model: ref.model.trimmingCharacters(in: .whitespacesAndNewlines),
                           thinking: ref.thinking ?? provider.thinking,
                           reasoningEffort: ref.reasoningEffort ?? provider.reasoningEffort)
+    }
+
+    /// 跟随“讲解与提问”时，按任务的上限降低思考强度；上限是“低”的任务同时关掉深度思考（DeepSeek）。
+    static func capped(_ config: ConnectionConfig, for task: ModelTask) -> ConnectionConfig {
+        guard let cap = task.effortCap else { return config }
+        var config = config
+        config.reasoningEffort = ReasoningEffort.capped(config.reasoningEffort, at: cap, supported: config.kind.reasoningEfforts)
+        if let rank = cap.rank, rank <= ReasoningEffort.low.rank! { config.thinking = false }
+        return config
     }
 
     /// 任务实际用的单独设置；跟随“讲解与提问”时为空。
