@@ -76,17 +76,39 @@ enum LectureOrganizer {
         var createdAt: Date
     }
 
-    /// 转写里的一句，时间已经换算成录音时间。
+    /// 转写里的一句，时间已经换算成录音时间。`segment` / `start` 是它在转写文件里的位置（保存纠正时用）。
     struct TimedLine: Equatable, Sendable {
         var time: Double
         var text: String
+        var segment = 0
+        var start = 0.0
+    }
+
+    /// 纠正过的句子（只存改过的），存在录音文件夹的 `corrections.json`。
+    struct Corrections: Codable, Equatable, Sendable {
+        struct Line: Codable, Equatable, Sendable {
+            var segment: Int
+            var start: Double
+            var text: String
+        }
+
+        var version = 1
+        var lines: [Line]
+        var createdAt: Date
+
+        /// 转写里的这一句纠正后的文字；没改过时为 nil。
+        func text(segment: Int, start: Double) -> String? {
+            lines.first { $0.segment == segment && abs($0.start - start) < 0.001 }?.text
+        }
     }
 
     // MARK: - 转写
 
     static func timed(_ lines: [TranscriptLine], in recording: Recording) -> [TimedLine] {
         lines.compactMap { line in
-            recording.time(segment: line.segment, at: line.start).map { TimedLine(time: $0, text: line.text) }
+            recording.time(segment: line.segment, at: line.start).map {
+                TimedLine(time: $0, text: line.text, segment: line.segment, start: line.start)
+            }
         }
     }
 
@@ -263,14 +285,22 @@ enum LectureOrganizer {
         }.joined(separator: "\n\n")
     }
 
-    /// 前缀：说明 + 带页码的课件全文。各段请求共用，可以命中缓存。没有课件时只找课程安排。
+    /// 各步请求共同的开头：带页码的课件全文。放在最前面，纠正转写和找要点用同一个模型时也能共用缓存。
+    static func coursewarePrefix(_ decks: [Deck], pageLimit: Int, english: Bool) -> String {
+        guard !decks.isEmpty else { return "" }
+        let body = courseware(decks, pageLimit: pageLimit, english: english)
+        return english
+            ? "Full text of the \(decks.count > 1 ? "decks" : "deck") used in a lecture taught in English, with page numbers:\n<courseware>\n\(body)\n</courseware>\n\n"
+            : "一节英文授课用到的\(decks.count > 1 ? "几份" : "")课件全文，按页标出页码：\n<courseware>\n\(body)\n</courseware>\n\n"
+    }
+
+    /// 找补充要点和课程安排的系统提示：课件全文在前，说明在后。没有课件时只找课程安排。
     static func supplementSystem(decks: [Deck], pageLimit: Int, english: Bool) -> String {
         if decks.isEmpty { return arrangementSystem(english: english) }
-        let courseware = courseware(decks, pageLimit: pageLimit, english: english)
-        let several = decks.count > 1
+        let prefix = coursewarePrefix(decks, pageLimit: pageLimit, english: english)
         if english {
-            return """
-            You help a student go through a recorded lecture taught in English. Below is the full text of the \(several ? "decks" : "deck") used in this lecture, with page numbers. I will then send the lecture transcript in parts, with timestamps.
+            return prefix + """
+            You help a student go through this recorded lecture. I will send the lecture transcript in parts, with timestamps.
             List only two kinds of things; the student doesn't need a summary of the lecture:
             - "supplement": what the lecturer said that is NOT on the slides: extra explanations, examples, analogies, wording that differs from the slides, and common mistakes the lecturer warned about. Leave out anything the slides already say and anything merely read from the slides.
             - "arrangement": anything about how the course runs: exams (dates, scope, format, what to focus on), assignments and deadlines, changes to the schedule or the room, grading, readings or preparation, office hours.
@@ -283,13 +313,10 @@ enum LectureOrganizer {
             - start: when that excerpt starts, written as in the transcript, e.g. "12:05".
             Output only JSON: {"items":[{"kind":"supplement","deck":1,"page":12,"point":"…","quote":"…","start":"12:05"}]}. If this part has neither, output {"items":[]}.
             The transcript comes from speech recognition and may contain misheard words; use the deck's terminology to make sense of it.
-            <courseware>
-            \(courseware)
-            </courseware>
             """
         }
-        return """
-        你在帮学生整理一节英文授课的课堂录音。下面是这节课用到的\(several ? "几份" : "")课件全文，按页标出页码。之后我会分段发给你老师讲课的转写，每句前面是时间。
+        return prefix + """
+        你在帮学生整理这节课的课堂录音。我会分段发给你老师讲课的转写，每句前面是时间。
         只列出两类内容，不需要概括这节课讲了什么：
         - "supplement"（补充）：老师讲了、但课件上没有的内容，包括补充的解释、例子、类比、和课件不同的说法、老师提醒的易错点。课件上已经写了的内容不要列出，照着课件念的也不要列出。
         - "arrangement"（课程安排）：和课程安排有关的内容，包括考试（时间、范围、题型、重点）、作业和截止日期、上课时间或地点的变动、分数构成、需要阅读或预习的材料、答疑时间。
@@ -302,10 +329,63 @@ enum LectureOrganizer {
         - start：这段原话开始的时间，照转写里的写法，例如 "12:05"。
         只输出 JSON：{"items":[{"kind":"supplement","deck":1,"page":12,"point":"…","quote":"…","start":"12:05"}]}。这一段两类内容都没有时输出 {"items":[]}。
         转写是语音识别的结果，可能有听错的词，请参照课件里的术语理解。
-        <courseware>
-        \(courseware)
-        </courseware>
         """
+    }
+
+    // MARK: - 纠正转写
+
+    /// 纠正转写的系统提示：课件全文在前（有的话），说明在后。
+    static func correctionSystem(decks: [Deck], pageLimit: Int, english: Bool) -> String {
+        let prefix = coursewarePrefix(decks, pageLimit: pageLimit, english: english)
+        let reference = decks.isEmpty ? "" : (english ? " Use the courseware above for terminology." : "请参照上面课件里的术语。")
+        if english {
+            return prefix + """
+            I will send the transcript of the lecture in parts. It comes from on-device speech recognition, which often mishears technical terms, names, acronyms and numbers (e.g. "Dykstra" for Dijkstra, "weight" for wait, "colonel" for kernel).\(reference)
+            Fix only recognition errors: misheard words, and punctuation or sentence breaks that are clearly wrong. Don't rephrase, polish, summarize, translate or drop anything; keep the lecturer's words. If unsure, leave the line as it is.
+            Each line starts with its number. Output only the lines you changed, each as the whole corrected line without the number or time: {"fixes":[{"id":12,"text":"…"}]}. If nothing needs fixing, output {"fixes":[]}.
+            """
+        }
+        return prefix + """
+        我会分段发给你这节课的转写。它是本机语音识别的结果，常把专业术语、人名、缩写、数字听错（例如把 Dijkstra 写成 Dykstra、把 wait 写成 weight、把 kernel 写成 colonel）。\(reference)
+        只改识别错误：听错的词，以及明显错误的标点和断句。不要改写、润色、概括、翻译或删减内容，保留老师的原话（英文）。拿不准的就不改。
+        每行开头是编号。只输出改过的行，每行给出改正后的整行（不带编号和时间）：{"fixes":[{"id":12,"text":"…"}]}。都不用改时输出 {"fixes":[]}。
+        """
+    }
+
+    /// 一段转写，每行前面是编号（在整节课里的序号）和时间。
+    static func correctionMessages(system: String, part: [(id: Int, line: TimedLine)], index: Int, total: Int,
+                                   english: Bool) -> [[String: Any]] {
+        let body = part.map { "#\($0.id) [\(clock($0.line.time))] \($0.line.text)" }.joined(separator: "\n")
+        let intro = english ? "Transcript part \(index)/\(total):" : "转写第 \(index)/\(total) 段："
+        return [
+            ["role": "system", "content": system],
+            ["role": "user", "content": "\(intro)\n<transcript>\n\(body)\n</transcript>"],
+        ]
+    }
+
+    /// 读出纠正：编号要在这一段里；和原句相同、空的、长度变化太大（多半是改写了）的不要。
+    static func parseCorrections(_ output: String, part: [(id: Int, line: TimedLine)]) -> [Int: String]? {
+        guard let json = jsonValue(output) else { return nil }
+        let object = json as? [String: Any]
+        guard let list = (object?["fixes"] as? [Any]) ?? (json as? [Any]) else { return nil }
+        let originals = Dictionary(part.map { ($0.id, $0.line.text) }, uniquingKeysWith: { first, _ in first })
+        var fixes: [Int: String] = [:]
+        for item in list {
+            guard let dict = item as? [String: Any] else { continue }
+            let rawID = dict["id"]
+            let id = (rawID as? NSNumber)?.intValue ?? (rawID as? String).flatMap { Int($0.filter(\.isNumber)) }
+            guard let id, let original = originals[id],
+                  var text = (dict["text"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else { continue }
+            // 模型有时把编号或时间也抄进来
+            if let range = text.range(of: #"^#?\d+\s*(\[[\d:]+\])?\s*"#, options: .regularExpression), text.hasPrefix("#") || text.hasPrefix("[") {
+                text.removeSubrange(range)
+            }
+            if let range = text.range(of: #"^\[[\d:]+\]\s*"#, options: .regularExpression) { text.removeSubrange(range) }
+            let a = Double(original.count), b = Double(text.count)
+            guard text != original, b >= a * 0.5 - 10, b <= a * 1.6 + 20 else { continue }
+            fixes[id] = text
+        }
+        return fixes
     }
 
     /// 没有课件可以对照：只找课程安排。
@@ -384,6 +464,22 @@ extension RecordingStore {
         decoder.dateDecodingStrategy = .iso8601
         guard let data = try? Data(contentsOf: folder(id).appendingPathComponent(Self.organizedName)) else { return nil }
         return try? decoder.decode(LectureOrganizer.Result.self, from: data)
+    }
+
+    static let correctionsName = "corrections.json"
+
+    func corrections(_ id: String) -> LectureOrganizer.Corrections? {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        guard let data = try? Data(contentsOf: folder(id).appendingPathComponent(Self.correctionsName)) else { return nil }
+        return try? decoder.decode(LectureOrganizer.Corrections.self, from: data)
+    }
+
+    func saveCorrections(_ corrections: LectureOrganizer.Corrections, for id: String) throws {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        encoder.dateEncodingStrategy = .iso8601
+        try encoder.encode(corrections).write(to: folder(id).appendingPathComponent(Self.correctionsName), options: .atomic)
     }
 
     /// 保存整理结果，并在清单里记下相关课件。

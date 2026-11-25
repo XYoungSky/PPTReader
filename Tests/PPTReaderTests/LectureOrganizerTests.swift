@@ -182,6 +182,44 @@ struct LectureOrganizerTests {
         #expect(item.kind == .supplement && item.page == 2)
     }
 
+    // MARK: - 纠正转写
+
+    @Test("纠正和找要点的请求都以同样的课件全文开头（同一个模型时共用缓存）；每行带编号和时间")
+    func correctionRequest() throws {
+        let correction = O.correctionSystem(decks: alignDecks, pageLimit: 1_000, english: false)
+        let supplement = O.supplementSystem(decks: alignDecks, pageLimit: 1_000, english: false)
+        let prefix = O.coursewarePrefix(alignDecks, pageLimit: 1_000, english: false)
+        #expect(!prefix.isEmpty && correction.hasPrefix(prefix) && supplement.hasPrefix(prefix))
+        #expect(correction.contains("\"fixes\"") && correction.contains("不要改写"))
+        #expect(!O.correctionSystem(decks: [], pageLimit: 1_000, english: true).contains("<courseware>"))
+
+        let part = [(id: 7, line: O.TimedLine(time: 65, text: "The colonel saves registers.")),
+                    (id: 8, line: O.TimedLine(time: 70, text: "Next."))]
+        let messages = O.correctionMessages(system: correction, part: part, index: 1, total: 3, english: false)
+        let user = try #require(messages.last?["content"] as? String)
+        #expect(user.contains("#7 [01:05] The colonel saves registers.\n#8 [01:10] Next."))
+    }
+
+    @Test("读出纠正：编号要在这一段里；去掉抄进来的编号和时间；没改、空的、改动太大的不要")
+    func parseCorrections() throws {
+        let part = [(id: 7, line: O.TimedLine(time: 65, text: "The colonel saves the registers of the process.")),
+                    (id: 8, line: O.TimedLine(time: 70, text: "Dykstra's semaphores.")),
+                    (id: 9, line: O.TimedLine(time: 75, text: "Okay."))]
+        let output = """
+        {"fixes":[
+          {"id":7,"text":"The kernel saves the registers of the process."},
+          {"id":"8","text":"#8 [01:10] Dijkstra's semaphores."},
+          {"id":9,"text":"Okay. And now a completely different and much longer sentence that the lecturer never said at all."},
+          {"id":12,"text":"out of this part"},
+          {"id":7,"text":"  "}
+        ]}
+        """
+        let fixes = try #require(O.parseCorrections(output, part: part))
+        #expect(fixes == [7: "The kernel saves the registers of the process.", 8: "Dijkstra's semaphores."])
+        #expect(O.parseCorrections(#"{"fixes":[{"id":9,"text":"Okay."}]}"#, part: part) == [:])
+        #expect(O.parseCorrections("broken", part: part) == nil)
+    }
+
     @Test("整理结果存进录音文件夹，清单里记下相关课件")
     func store() async throws {
         try await withDirectory { root in
@@ -194,13 +232,17 @@ struct LectureOrganizerTests {
             ], createdAt: Date(timeIntervalSince1970: 1_764_000_000))
             try store.saveOrganized(result, for: r.id)
             #expect(store.organized(r.id) == result)
+            let corrections = O.Corrections(lines: [.init(segment: 1, start: 5, text: "fixed")], createdAt: Date(timeIntervalSince1970: 0))
+            try store.saveCorrections(corrections, for: r.id)
+            #expect(store.corrections(r.id) == corrections)
+            #expect(corrections.text(segment: 1, start: 5) == "fixed" && corrections.text(segment: 1, start: 6) == nil)
             #expect(store.load(r.id)?.relatedDecks == ["/c/a.pdf"])
         }
     }
 
     // MARK: - 完整流程
 
-    @Test("用假的模型跑一遍：找出两份课件让用户确认，逐段找补充要点和课程安排，保存")
+    @Test("用假的模型跑一遍：找出两份课件让用户确认，逐段纠正转写，再用纠正过的转写找补充要点和课程安排，保存")
     func fullRun() async throws {
         try await withDirectory { root in
             let course = root.appendingPathComponent("OS")
@@ -238,7 +280,12 @@ struct LectureOrganizerTests {
                     // 列表顺序：录音时打开的那份所在的文件夹里，按名字排
                     #expect(user.contains("[2] 04-processes") && user.contains("[3] 05-scheduling"))
                     text = #"{"course":"comp 3021","decks":[{"id":2,"reason":"PCB"},{"id":3,"reason":"round robin"}]}"#
+                case .lectureTranscript:
+                    text = user.contains("#1 [00:05] The PCB stores the registers.")
+                        ? #"{"fixes":[{"id":1,"text":"The PCB stores all the registers."}]}"#
+                        : #"{"fixes":[]}"#
                 default:
+                    if user.contains(" 1/2") { #expect(user.contains("all the registers")) }
                     text = user.contains(" 1/2")
                         ? #"{"items":[{"kind":"supplement","deck":1,"page":1,"point":"PCB 存寄存器","quote":"The PCB","start":"00:05"},{"kind":"arrangement","page":null,"point":"考试会考","quote":"exam","start":"06:40"}]}"#
                         : #"{"items":[{"kind":"supplement","deck":2,"page":1,"point":"时间片","quote":"quantum","start":"10:10"}]}"#
@@ -259,7 +306,8 @@ struct LectureOrganizerTests {
             controller.confirmOrganize(r.id, decks: [deckA.path, deckB.path])
             while controller.organizeTasks[r.id] != nil { await Task.yield() }
             #expect(controller.organizing[r.id] == nil)
-            #expect(calls.map(\.0) == [.lectureDecks, .lectureSupplements, .lectureSupplements])
+            #expect(calls.map(\.0) == [.lectureDecks, .lectureTranscript, .lectureTranscript, .lectureSupplements, .lectureSupplements])
+            #expect(store.corrections(r.id)?.lines == [.init(segment: 1, start: 5, text: "The PCB stores all the registers.")])
 
             let result = try #require(store.organized(r.id))
             #expect(result.decks == [deckA.path, deckB.path])

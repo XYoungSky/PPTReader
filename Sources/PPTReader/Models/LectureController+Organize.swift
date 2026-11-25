@@ -1,6 +1,7 @@
 import Foundation
 
-/// 「AI 整理」的流程：先判断相关课件让用户确认，再对照课件找补充要点和课程安排。每一步用对应任务的模型，用量计入统计。
+/// 「AI 整理」的流程：先判断相关课件让用户确认，再参照课件纠正转写，最后对照课件找补充要点和课程安排。
+/// 每一步用对应任务的模型，用量计入统计。
 extension LectureController {
     /// 某次录音正在整理到哪一步（录音窗口据此显示）。
     enum OrganizeState: Equatable {
@@ -131,7 +132,9 @@ extension LectureController {
         let id = recording.id
         let lines = LectureOrganizer.timed(store.transcript(id), in: recording)
         guard !lines.isEmpty else { throw OrganizeFailure.noTranscript }
-        guard completion != nil || settings.canRequest(.lectureSupplements) else { throw OrganizeFailure.notConfigured }
+        guard completion != nil || (settings.canRequest(.lectureTranscript) && settings.canRequest(.lectureSupplements)) else {
+            throw OrganizeFailure.notConfigured
+        }
         let english = Localizer.shared.isEnglish
 
         var decks: [LectureOrganizer.Deck] = []
@@ -144,28 +147,56 @@ extension LectureController {
         }
         let statsDeck = statsDeck(recording, decks: paths)
 
-        // 第 2 步：对照课件找补充要点和课程安排（没有课件时只找课程安排）
+        // 课件太长时缩短每页的字数，给转写留出地方（两步用同样的前缀，同一个模型时可以共用缓存）
         let config = settings.connection(for: .lectureSupplements)
         let maxOutput = settings.outputCap(config.providerID, config.model, limit: 8_192)
-        let parts = LectureOrganizer.chunks(lines)
-        // 课件太长时缩短每页的字数，给转写留出地方
         let deckBudget = budget(config, maxOutput: maxOutput) - 4_000
         var pageLimit = 1_200
-        var system = LectureOrganizer.supplementSystem(decks: decks, pageLimit: pageLimit, english: english)
-        while TokenEstimate.of(system) > deckBudget, pageLimit > 150 {
+        while TokenEstimate.of(LectureOrganizer.coursewarePrefix(decks, pageLimit: pageLimit, english: english)) > deckBudget, pageLimit > 150 {
             pageLimit = pageLimit * 7 / 10
-            system = LectureOrganizer.supplementSystem(decks: decks, pageLimit: pageLimit, english: english)
         }
-        var items: [LectureOrganizer.Supplement] = []
+        let parts = LectureOrganizer.chunks(lines)
+
+        // 第 2 步：纠正转写。只是锦上添花：某一段读不出结果时跳过这一段
+        var corrected = lines
+        var fixed: [LectureOrganizer.Corrections.Line] = []
+        let correction = LectureOrganizer.correctionSystem(decks: decks, pageLimit: pageLimit, english: english)
+        var offset = 0
         for (index, part) in parts.enumerated() {
             try Task.checkCancellation()
-            let what = decks.isEmpty ? tr("找课程安排", "Looking for course arrangements") : tr("对照课件找要点", "Comparing with the slides")
             organizing[id] = .running(step: 2, message: parts.count > 1
-                                      ? tr("\(what)（第 \(index + 1)/\(parts.count) 段）", "\(what) (part \(index + 1) of \(parts.count))")
-                                      : what + "…",
+                                      ? tr("纠正转写（第 \(index + 1)/\(parts.count) 段）", "Correcting the transcript (part \(index + 1) of \(parts.count))")
+                                      : tr("纠正转写…", "Correcting the transcript…"),
                                       done: index, total: parts.count)
             RecordingsWindow.shared.recordingsDidChange()
-            let messages = LectureOrganizer.supplementMessages(system: system, part: part, index: index + 1, total: parts.count,
+            let numbered = part.enumerated().map { (id: offset + $0.offset + 1, line: $0.element) }
+            offset += part.count
+            let messages = LectureOrganizer.correctionMessages(system: correction, part: numbered, index: index + 1,
+                                                               total: parts.count, english: english)
+            let output = try await complete(.lectureTranscript, messages, limit: 8_192, cacheKey: "lecture-\(id)", deck: statsDeck)
+            for (lineID, text) in LectureOrganizer.parseCorrections(output.text, part: numbered) ?? [:] {
+                let line = corrected[lineID - 1]
+                corrected[lineID - 1].text = text
+                fixed.append(.init(segment: line.segment, start: line.start, text: text))
+            }
+        }
+        fixed.sort { ($0.segment, $0.start) < ($1.segment, $1.start) }
+        try store.saveCorrections(.init(lines: fixed, createdAt: Date()), for: id)
+        RecordingsWindow.shared.recordingsDidChange()
+
+        // 第 3 步：对照课件找补充要点和课程安排（没有课件时只找课程安排），用纠正过的转写
+        let system = LectureOrganizer.supplementSystem(decks: decks, pageLimit: pageLimit, english: english)
+        let correctedParts = LectureOrganizer.chunks(corrected)
+        var items: [LectureOrganizer.Supplement] = []
+        for (index, part) in correctedParts.enumerated() {
+            try Task.checkCancellation()
+            let what = decks.isEmpty ? tr("找课程安排", "Looking for course arrangements") : tr("对照课件找要点", "Comparing with the slides")
+            organizing[id] = .running(step: 3, message: correctedParts.count > 1
+                                      ? tr("\(what)（第 \(index + 1)/\(correctedParts.count) 段）", "\(what) (part \(index + 1) of \(correctedParts.count))")
+                                      : what + "…",
+                                      done: index, total: correctedParts.count)
+            RecordingsWindow.shared.recordingsDidChange()
+            let messages = LectureOrganizer.supplementMessages(system: system, part: part, index: index + 1, total: correctedParts.count,
                                                                english: english)
             let output = try await complete(.lectureSupplements, messages, limit: 8_192, cacheKey: "lecture-\(id)", deck: statsDeck)
             guard let found = LectureOrganizer.parseSupplements(output.text, decks: decks, part: part) else {

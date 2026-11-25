@@ -47,7 +47,7 @@ enum RecordingsPayload {
             "lines": lines.compactMap { line -> [String: Any]? in
                 guard let start = recording.time(segment: line.segment, at: line.start) else { return nil }
                 let end = recording.time(segment: line.segment, at: line.end) ?? start
-                return ["segment": line.segment, "t": start, "end": max(start, end), "text": line.text]
+                return ["segment": line.segment, "start": line.start, "t": start, "end": max(start, end), "text": line.text]
             },
         ]
         if let deck = recording.deckPath { payload["deck"] = URL(fileURLWithPath: deck).lastPathComponent }
@@ -202,6 +202,9 @@ final class RecordingsWindow: NSObject {
         var payload = RecordingsPayload.detail(recording, lines: store.transcript(recording.id), status: status,
                                                queued: queued, duration: duration, live: live)
         if let result = store.organized(recording.id) { payload["supplements"] = RecordingsPayload.supplements(result) }
+        if let corrections = store.corrections(recording.id) {
+            payload["corrections"] = corrections.lines.map { ["segment": $0.segment, "start": $0.start, "text": $0.text] as [String: Any] }
+        }
         if let state = lectures?.organizing[recording.id] {
             payload["organize"] = RecordingsPayload.organize(state, recordedDeck: recording.deckPath)
         }

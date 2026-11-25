@@ -824,3 +824,8 @@ button.page:hover { background: var(--accent-soft); color: var(--accent); }
 .arrangements .ts-button.lead { justify-self: start; color: var(--accent); background: var(--accent-soft); }
 .arrangements .page { white-space: nowrap; }
 .arrangements .supp:first-child { border-top: 0; }
+
+/* 纠正版：改动的词 */
+.fix-summary { max-width: 744px; margin: 0 0 10px 78px; color: var(--muted); font-size: 12px; }
+.line.fixed ins { text-decoration: none; background: rgba(120, 180, 90, 0.22); border-radius: 3px; padding: 0 2px; }
+@media (prefers-color-scheme: dark) { .line.fixed ins { background: rgba(130, 200, 100, 0.22); } }

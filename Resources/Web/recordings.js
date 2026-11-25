@@ -4,6 +4,7 @@
 //     items: [{id, title, course, tags, startedAt(毫秒), duration(秒), status: 'recording'|'transcribing'|'ready', organized, elapsed?}]
 //   Recordings.showDetail({id, title, startedAt, duration, locale, deck, status, segments, lines, live, supplements, organize})
 //     supplements: [{kind: 'supplement'|'arrangement', deck, deckTitle, page, point, quote, t}]（整理过才有）
+//     corrections: [{segment, start, text}]：纠正过的句子（整理过才有）；lines 里的 segment + start 对得上
 //     segments: [{index, duration, state: 'complete'|'damaged'|'recording', transcribed, queued}]
 //     lines: [{t, end, text}]，t 是录音时间（秒，已按分段换算好）；segment 标出所属分段
 //   Recordings.setPlayback({time, playing, rate})
@@ -172,14 +173,16 @@
     renderPlayback();
 
     const count = (kind) => (d.supplements || []).filter((item) => (item.kind || 'supplement') === kind).length;
+    const fixes = (d.corrections || []).length;
     const tabs = [
       ['transcript', t('转写', 'Transcript'), ''],
+      ['corrected', t('纠正版', 'Corrected'), d.corrections ? String(fixes) : ''],
       ['supplements', t('补充要点', 'Supplements'), count('supplement') ? String(count('supplement')) : ''],
       ['arrangements', t('课程安排', 'Course arrangements'), count('arrangement') ? String(count('arrangement')) : ''],
     ];
     $('tabs').innerHTML = tabs.map(([key, label, count]) =>
       `<button type="button" role="tab" data-tab="${key}" class="${key === tab ? 'active' : ''}">${label}${count ? `<span class="count">${count}</span>` : ''}</button>`).join('');
-    $('search').style.visibility = tab === 'transcript' ? 'visible' : 'hidden';
+    $('search').style.visibility = tab === 'transcript' || tab === 'corrected' ? 'visible' : 'hidden';
     $('search-input').placeholder = t('搜索转写', 'Search transcript');
     renderContent(keepScroll);
   }
@@ -275,6 +278,23 @@
       return;
     }
 
+    if (tab === 'corrected' && !d.corrections) {
+      if (!d.organize) {
+        content.appendChild(placeholder(t('还没有纠正版', 'No corrected version yet'),
+          t('点「AI 整理」后，会参照课件改正转写里听错的术语、人名和数字（只改识别错误，不改写），改过的地方会标出来。',
+            'After you organize this lecture, misheard terms, names and numbers are fixed using the slides (recognition errors only, no rewriting), and every change is marked.')));
+      }
+      return;
+    }
+    const fixedText = new Map((tab === 'corrected' ? d.corrections : []).map((fix) => [`${fix.segment}:${Number(fix.start).toFixed(3)}`, fix.text]));
+    if (tab === 'corrected') {
+      const summary = document.createElement('p');
+      summary.className = 'fix-summary';
+      summary.textContent = fixedText.size
+        ? t(`改了 ${fixedText.size} 句，改动的词标了底色；鼠标停在上面可以看到原文。`, `${fixedText.size} lines fixed; changed words are highlighted, hover to see the original.`)
+        : t('没有发现需要改正的地方。', 'Nothing needed fixing.');
+      content.appendChild(summary);
+    }
     const bySegment = new Map();
     for (const line of d.lines) {
       if (!bySegment.has(line.segment)) bySegment.set(line.segment, []);
@@ -304,7 +324,9 @@
           span.className = 'line';
           span.dataset.t = line.t;
           span.dataset.end = line.end;
-          let html = escape(line.text);
+          const fix = fixedText.get(`${line.segment}:${Number(line.start).toFixed(3)}`);
+          let html = fix ? diffHTML(line.text, fix) : escape(line.text);
+          if (fix) { span.classList.add('fixed'); span.title = t('原文：', 'Original: ') + line.text; }
           if (needle) {
             const re = new RegExp(needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
             html = html.replace(re, (m) => { matches += 1; return `<mark>${m}</mark>`; });
@@ -333,6 +355,28 @@
     if (needle) toast(matches ? t(`找到 ${matches} 处`, `${matches} matches`) : t('没有找到', 'No matches'));
     if (revealOrganize()) return;
     highlightCurrent(!keepScroll);
+  }
+
+  /** 纠正后的句子：和原句逐词比较，新出现或改过的词标出来。 */
+  function diffHTML(before, after) {
+    const a = before.split(/\s+/).filter(Boolean);
+    const b = after.split(/\s+/).filter(Boolean);
+    // 最长公共子序列（句子都很短，直接用表）
+    const dp = Array.from({ length: a.length + 1 }, () => new Array(b.length + 1).fill(0));
+    for (let i = a.length - 1; i >= 0; i -= 1) {
+      for (let j = b.length - 1; j >= 0; j -= 1) {
+        dp[i][j] = a[i] === b[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+      }
+    }
+    const out = [];
+    let i = 0;
+    let j = 0;
+    while (j < b.length) {
+      if (i < a.length && a[i] === b[j]) { out.push(escape(b[j])); i += 1; j += 1; }
+      else if (i < a.length && dp[i + 1][j] >= dp[i][j + 1]) { i += 1; }
+      else { out.push(`<ins>${escape(b[j])}</ins>`); j += 1; }
+    }
+    return out.join(' ').replace(/<\/ins> <ins>/g, ' ');
   }
 
   function notice(kind, message, spinning) {
@@ -376,10 +420,10 @@
     const cancel = () => post({ type: 'organizeCancel', id: detail.id });
     if (state.stage === 'finding' || state.stage === 'running') {
       const fraction = state.total ? Math.min(1, state.done / state.total) : 0;
-      const step = state.stage === 'finding' ? 1 : Math.min(state.step, 2);
+      const step = state.stage === 'finding' ? 1 : Math.min(state.step, 3);
       const message = state.stage === 'finding' ? t('正在判断这节课讲了哪几份课件…', 'Finding which decks this lecture covered…') : state.message;
       box.innerHTML = `
-        <div class="org-head"><span class="spinner"></span><strong>${t(`AI 整理 · 第 ${step} 步，共 2 步`, `Organizing · step ${step} of 2`)}</strong><span class="spacer"></span><button type="button" class="link">${t('取消', 'Cancel')}</button></div>
+        <div class="org-head"><span class="spinner"></span><strong>${t(`AI 整理 · 第 ${step} 步，共 3 步`, `Organizing · step ${step} of 3`)}</strong><span class="spacer"></span><button type="button" class="link">${t('取消', 'Cancel')}</button></div>
         <p class="org-message">${escape(message)}</p>
         ${state.total ? `<div class="org-bar"><div style="width:${fraction * 100}%"></div></div>` : ''}`;
       box.querySelector('.link').addEventListener('click', cancel);
@@ -403,10 +447,10 @@
       <div class="org-head"><strong>${t('这节课讲了哪几份课件？', 'Which decks did this lecture cover?')}</strong></div>
       <p class="org-message">${decks.length
         ? (suggested.length ? t('AI 选出了下面这些，可以增减。', 'These were picked by AI; add or remove as needed.') : t('AI 没有找到明显相关的课件，可以自己勾选。', 'AI found no clearly related deck; pick them yourself.'))
-        : t('课程文件夹里没有找到课件，会只从转写里找课程安排。', 'No decks were found in the course folder; only course arrangements will be looked for.')}</p>
+        : t('课程文件夹里没有找到课件：会纠正转写，再从转写里找课程安排。', 'No decks were found in the course folder: the transcript will be corrected and searched for course arrangements only.')}</p>
       <div class="deck-list"></div>
-      <p class="org-note">${t('开始后会把转写和勾选课件的文字发给「补充要点与课程安排」任务的模型（在「设置 → 模型」里可以单独选），按用量计费。',
-        'Starting sends the transcript and the checked decks\' text to the Lecture supplements model (choose it in Settings → Model); usage is billed.')}</p>
+      <p class="org-note">${t('开始后会把转写和勾选课件的文字发给「纠正转写」和「补充要点与课程安排」任务的模型（在「设置 → 模型」里可以单独选），按用量计费。',
+        'Starting sends the transcript and the checked decks\' text to the Correct transcript and Lecture supplements models (choose them in Settings → Model); usage is billed.')}</p>
       <div class="org-actions"><button type="button" class="primary start"></button><button type="button" class="link">${t('取消', 'Cancel')}</button></div>`;
     const list = box.querySelector('.deck-list');
     const row = (deck) => {
@@ -758,7 +802,7 @@
         for (let i = 0; i < count; i += 1) {
           const text = SENTENCES[next++];
           const length = 1.2 + text.length * 0.055;
-          lines.push({ segment: segment.index, t: time, end: time + length, text });
+          lines.push({ segment: segment.index, start: time - offset, t: time, end: time + length, text });
           time += length + (i % 4 === 3 ? 5 : 0.4);
         }
       }
@@ -824,6 +868,11 @@
       ({ id, title, course, tags, startedAt, duration, status, organized: !!supplements, elapsed })),
   });
   demoSelect('a');
+  DEMO.a.corrections = [
+    { segment: DEMO.a.lines[2].segment, start: DEMO.a.lines[2].start, text: DEMO.a.lines[2].text.replace('process control block', 'process control block (PCB)') },
+    { segment: DEMO.a.lines[5].segment, start: DEMO.a.lines[5].start, text: DEMO.a.lines[5].text.replace('loads', 'restores') },
+  ];
+
   window.__demo = {
     select: demoSelect,
     play: () => { playback.playing = true; demoPlay(true); renderPlayback(); },
