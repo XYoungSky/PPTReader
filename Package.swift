@@ -8,6 +8,11 @@ let package = Package(
         .executableTarget(
             name: "PPTReader",
             path: "Sources/PPTReader"
-        )
+        ),
+        .testTarget(
+            name: "PPTReaderTests",
+            dependencies: ["PPTReader"],
+            path: "Tests/PPTReaderTests"
+        ),
     ]
 )

@@ -221,7 +221,7 @@ enum OpenAIClient {
     private static let maxRetries = 3
 
     /// 非 2xx 响应，附带重试需要的信息。
-    private struct HTTPFailure: Error {
+    struct HTTPFailure: Error {
         let error: APIError
         let status: Int
         let retryAfter: Double?
@@ -323,7 +323,7 @@ enum OpenAIClient {
 
     /// 可以重试时返回等待的秒数：限流和服务端临时故障按 Retry-After 或指数退避，连接中断稍等即重试。
     /// 额度用尽、余额不足这类重试也没用的错误，以及要等很久的限流，直接报错。
-    private static func retryDelay(for error: Error, attempt: Int) -> Double? {
+    static func retryDelay(for error: Error, attempt: Int) -> Double? {
         let backoff = 1.5 * pow(2, Double(attempt))
         if let failure = error as? HTTPFailure {
             guard !failure.permanent, [408, 429, 500, 502, 503, 504, 529].contains(failure.status) else { return nil }
@@ -388,10 +388,13 @@ enum OpenAIClient {
 
     /// 重试也没用的错误。OpenRouter 的 503 有两种：上游过载（metadata.error_type 为 provider_overloaded）
     /// 稍后重试可能成功；没有满足条件的上游（换模型或改路由要求才行）重试只会白等。
+    /// 不带 OpenRouter 错误 JSON 的 503（网关的 HTML 页面、空响应）不是路由结论，按临时故障重试。
     static func isPermanent(_ status: Int, _ data: Data, _ config: ConnectionConfig) -> Bool {
-        guard config.kind == .openRouter, status == 503 else { return false }
-        let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-        let metadata = (json?["error"] as? [String: Any])?["metadata"] as? [String: Any]
+        guard config.kind == .openRouter, status == 503,
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let error = json["error"] as? [String: Any]
+        else { return false }
+        let metadata = error["metadata"] as? [String: Any]
         return (metadata?["error_type"] as? String) != "provider_overloaded"
     }
 
