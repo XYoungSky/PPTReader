@@ -22,6 +22,8 @@ final class AppModel {
     let library = CourseLibrary()
     let stats = StatsStore()
     let chat: ChatController
+    /// 课堂录音（macOS 26+）。
+    let lectures: LectureController
     private(set) var phase: ReaderPhase = .empty
 
     var selectedFile: URL? {
@@ -38,6 +40,12 @@ final class AppModel {
         chat.onChange = { RoadmapWindow.shared.progressDidChange() }
         tracker = StudyTracker(stats: stats)
         tracker.isBusy = { [weak chat] in chat?.isStreaming ?? false }
+        lectures = LectureController(settings: settings)
+        lectures.context = { [weak self] in
+            guard let self, let reader = self.reader else { return nil }
+            return LectureController.Context(title: reader.title, coursePath: self.chat.course?.path,
+                                             deckPath: reader.sourceURL.path, pages: reader.promptText?.pages ?? [])
+        }
         if let folder = library.recentFolders.first {
             library.open(folder)
             if let last = UserDefaults.standard.string(forKey: Self.lastFileKey),

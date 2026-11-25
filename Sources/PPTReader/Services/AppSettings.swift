@@ -71,6 +71,7 @@ final class AppSettings {
         static let chatSerif = "ui.chatSerif"
         static let figureOpacity = "ui.figureOpacity"
         static let dragSelectsRegion = "reader.dragSelectsRegion"
+        static let recordingLocale = "recording.locale"
     }
 
     @ObservationIgnored private let defaults: UserDefaults
@@ -117,6 +118,8 @@ final class AppSettings {
     static let figureOpacityRange = 0.3...1.0
     /// 在课件上拖动默认是框选（否则默认选文字）；按住 Shift 拖动临时换成另一种。
     var dragSelectsRegion: Bool { didSet { defaults.set(dragSelectsRegion, forKey: Key.dragSelectsRegion) } }
+    /// 课堂录音的转写语言（口音），例如 `en_US`。
+    var recordingLocale: String { didSet { defaults.set(recordingLocale, forKey: Key.recordingLocale) } }
 
     @ObservationIgnored private var keyCache: [UUID: String] = [:]
     /// 也可以通过环境变量提供 Key（便于命令行启动和调试），在服务商没有保存 Key 时使用。
@@ -156,6 +159,7 @@ final class AppSettings {
         chatFontSize = defaults.object(forKey: Key.chatFontSize) as? Double ?? 15
         chatSerif = defaults.bool(forKey: Key.chatSerif)
         dragSelectsRegion = defaults.bool(forKey: Key.dragSelectsRegion)
+        recordingLocale = defaults.string(forKey: Key.recordingLocale) ?? "en_US"
         figureOpacity = min(max(defaults.object(forKey: Key.figureOpacity) as? Double ?? 1, Self.figureOpacityRange.lowerBound),
                             Self.figureOpacityRange.upperBound)
         let envKey = ProcessInfo.processInfo.environment["PPTREADER_API_KEY"]?.trimmingCharacters(in: .whitespacesAndNewlines)

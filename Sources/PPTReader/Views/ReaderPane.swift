@@ -24,7 +24,7 @@ struct ReaderPane: View {
                     .background(Capsule().fill(Theme.surface))
                     .overlay(Capsule().strokeBorder(Theme.border))
                     .shadow(color: .black.opacity(0.06), radius: 8, y: 2)
-                    .padding(.bottom, 16)
+                    .padding(.bottom, model.lectures.isRecording ? 64 : 16)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
                     .help(tr("正在识别没有文字层的页面", "Recognizing pages without a text layer"))
                 }
@@ -247,6 +247,10 @@ struct ReaderHeader: View {
                 }
                 .buttonStyle(IconButtonStyle())
                 .help((reader.continuousScroll ? tr("连续滚动", "Continuous") : tr("单页", "Single page")) + ShortcutStore.shared.hint(.toggleLayout))
+
+                if LectureController.isSupported {
+                    RecordButton()
+                }
 
                 if !showsChat {
                     Button {

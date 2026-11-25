@@ -32,6 +32,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
+
+    /// 正在录音时先确认；停止会把当前分段写完、存好清单，再退出。
+    @MainActor
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard let lectures = SettingsWindow.model?.lectures, lectures.isRecording else { return .terminateNow }
+        let alert = NSAlert()
+        alert.messageText = tr("正在录音", "Recording in progress")
+        alert.informativeText = tr("退出前会停止录音并保存已经录下的部分。", "Quitting stops the recording and saves what has been recorded.")
+        alert.addButton(withTitle: tr("停止录音并退出", "Stop and Quit"))
+        alert.addButton(withTitle: tr("取消", "Cancel"))
+        guard alert.runModal() == .alertFirstButtonReturn else { return .terminateCancel }
+        lectures.stop()
+        return .terminateNow
+    }
 }
 
 struct AppCommands: Commands {
@@ -120,6 +134,32 @@ struct AppCommands: Commands {
                 }))
                 .keyboardShortcut(key(.toggleLayout))
                 .disabled(reader == nil)
+        }
+
+        CommandMenu(tr("录音", "Record")) {
+            let lectures = model.lectures
+            Button(lectures.isRecording ? tr("停止录音", "Stop Recording") : tr("开始录音", "Start Recording")) { lectures.toggle() }
+                .keyboardShortcut(key(.record))
+                .disabled(!LectureController.isSupported)
+            Button(lectures.recorder.state == .paused ? tr("继续录音", "Resume Recording") : tr("暂停录音", "Pause Recording")) {
+                lectures.recorder.state == .paused ? lectures.resume() : lectures.pause()
+            }
+            .disabled(!lectures.isRecording)
+            Divider()
+            Picker(tr("转写语言", "Transcription Language"), selection: Binding(
+                get: { settings.recordingLocale }, set: { settings.recordingLocale = $0 })) {
+                ForEach(LectureController.locales, id: \.id) { locale in
+                    Text(locale.title).tag(locale.id)
+                }
+            }
+            .disabled(!LectureController.isSupported || lectures.isRecording)
+            Divider()
+            Button(tr("课堂录音", "Lectures")) { RecordingsWindow.shared.show() }
+                .keyboardShortcut(key(.recordings))
+                .disabled(!LectureController.isSupported)
+            if !LectureController.isSupported {
+                Text(tr("课堂录音需要 macOS 26 或更新版本", "Lecture recording requires macOS 26 or later"))
+            }
         }
 
         CommandMenu(tr("讲解", "Tutor")) {

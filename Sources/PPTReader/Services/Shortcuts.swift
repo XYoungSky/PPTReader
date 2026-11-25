@@ -8,11 +8,12 @@ enum ShortcutAction: String, CaseIterable, Identifiable {
     case toggleSidebar, toggleChat, statistics, roadmap
     case previousPage, nextPage, zoomIn, zoomOut, fitToWindow, toggleLayout
     case explainPage, askQuestion, summarize, conceptMap, quiz, toggleAutoExplain, toggleThinking, stop
+    case record, recordings
 
     var id: String { rawValue }
 
     enum Group: CaseIterable, Identifiable {
-        case file, view, reading, tutor
+        case file, view, reading, tutor, recording
 
         var id: Self { self }
 
@@ -22,6 +23,7 @@ enum ShortcutAction: String, CaseIterable, Identifiable {
             case .view: tr("显示", "View")
             case .reading: tr("阅读", "Reading")
             case .tutor: tr("讲解", "Tutor")
+            case .recording: tr("课堂录音", "Lectures")
             }
         }
     }
@@ -32,6 +34,7 @@ enum ShortcutAction: String, CaseIterable, Identifiable {
         case .toggleSidebar, .toggleChat, .statistics, .roadmap: .view
         case .previousPage, .nextPage, .zoomIn, .zoomOut, .fitToWindow, .toggleLayout: .reading
         case .explainPage, .askQuestion, .summarize, .conceptMap, .quiz, .toggleAutoExplain, .toggleThinking, .stop: .tutor
+        case .record, .recordings: .recording
         }
     }
 
@@ -57,6 +60,8 @@ enum ShortcutAction: String, CaseIterable, Identifiable {
         case .toggleAutoExplain: tr("翻页自动讲解", "Auto-explain on page turn")
         case .toggleThinking: tr("深度思考", "Deep thinking")
         case .stop: tr("停止生成", "Stop generating")
+        case .record: tr("开始 / 停止录音", "Start / stop recording")
+        case .recordings: tr("课堂录音窗口", "Lectures window")
         }
     }
 
@@ -68,6 +73,8 @@ enum ShortcutAction: String, CaseIterable, Identifiable {
         case .toggleChat: KeyCombo("0", [.option, .command])
         case .statistics: KeyCombo("s", [.shift, .command])
         case .roadmap: KeyCombo("m", [.shift, .command])
+        case .record: KeyCombo("r", [.shift, .command])
+        case .recordings: KeyCombo("r", [.option, .command])
         case .previousPage: KeyCombo(KeyCombo.up, [.option, .command])
         case .nextPage: KeyCombo(KeyCombo.down, [.option, .command])
         case .zoomIn: KeyCombo("=", [.command])

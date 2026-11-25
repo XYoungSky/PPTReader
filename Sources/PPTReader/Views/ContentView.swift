@@ -28,6 +28,9 @@ struct ReaderColumn: View {
             content
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .animation(Motion.content, value: phaseID)
+                .overlay(alignment: .bottom) {
+                    if LectureController.isSupported { RecordingDock() }
+                }
         }
         .background(Theme.canvas)
     }

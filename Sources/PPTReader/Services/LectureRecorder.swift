@@ -146,6 +146,8 @@ final class LectureRecorder {
     @ObservationIgnored nonisolated(unsafe) var onBuffer: (@Sendable (AVAudioPCMBuffer, AVAudioTime) -> Void)?
     /// 分段关闭后调用（补转写、更新列表用）。
     @ObservationIgnored var onSegmentClosed: ((Recording, Int) -> Void)?
+    /// 录音结束后调用，包括到了时长上限、出错自动停下的情况。
+    @ObservationIgnored var onStop: ((Recording?) -> Void)?
 
     @ObservationIgnored private let store: RecordingStore
     @ObservationIgnored private var engine: AVAudioEngine?
@@ -321,6 +323,7 @@ final class LectureRecorder {
         activity = nil
         state = .idle
         level = 0
+        onStop?(recording)
     }
 
     /// 在主线程上按顺序执行：已经在主线程就马上执行，否则排进主队列（先进先出）。

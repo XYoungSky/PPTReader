@@ -210,6 +210,8 @@ final class TranscriptionQueue {
     private(set) var lastError: String?
 
     var engine: TranscriptionEngine = .speech
+    /// 每转写完（或失败）一段后调用，录音窗口据此刷新。
+    @ObservationIgnored var onJobFinished: ((Job) -> Void)?
     /// 录音 id → 词表（课件里的术语）。
     @ObservationIgnored var terms: [String: [String]] = [:]
 
@@ -228,6 +230,11 @@ final class TranscriptionQueue {
     }
 
     var isIdle: Bool { current == nil && pending.isEmpty }
+
+    /// 这次录音还有分段在排队或正在转写。
+    func isBusy(with recording: String) -> Bool {
+        current?.recording == recording || pending.contains { $0.recording == recording }
+    }
 
     func enqueue(_ recording: String, segment: Int) {
         let job = Job(recording: recording, segment: segment)
@@ -264,6 +271,7 @@ final class TranscriptionQueue {
         worker = Task { [weak self] in
             while let self, let job = self.next() {
                 await self.run(job)
+                self.onJobFinished?(job)
             }
             self?.current = nil
             self?.worker = nil

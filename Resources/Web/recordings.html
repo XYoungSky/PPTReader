@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>课堂录音</title>
+  <link rel="stylesheet" href="recordings.css">
+</head>
+<body>
+  <aside id="sidebar">
+    <div class="sidebar-head">
+      <h2 id="list-title"></h2>
+    </div>
+    <nav id="list" aria-label="录音列表"></nav>
+  </aside>
+
+  <main id="detail">
+    <header id="head">
+      <div class="title-row">
+        <h1 id="title"></h1>
+        <span class="spacer"></span>
+        <button type="button" id="organize" class="primary"></button>
+        <button type="button" id="more" class="icon" aria-haspopup="menu"></button>
+      </div>
+      <p id="meta"></p>
+
+      <div id="player">
+        <button type="button" id="back" class="icon"></button>
+        <button type="button" id="play" class="play"></button>
+        <button type="button" id="forward" class="icon"></button>
+        <span id="time" class="clock"></span>
+        <div id="scrubber" role="slider" tabindex="0">
+          <div class="track"><div class="fill"></div></div>
+          <div class="ticks"></div>
+          <div class="knob"></div>
+        </div>
+        <span id="duration" class="clock"></span>
+        <button type="button" id="rate"></button>
+      </div>
+
+      <div class="tabs-row">
+        <div id="tabs" role="tablist"></div>
+        <span class="spacer"></span>
+        <label id="search">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="m10.5 10.5 3 3"/></svg>
+          <input type="search" id="search-input">
+        </label>
+      </div>
+    </header>
+
+    <section id="content"></section>
+  </main>
+
+  <section id="empty" hidden>
+    <div class="empty-icon" aria-hidden="true"></div>
+    <p id="empty-text"></p>
+  </section>
+
+  <div id="menu" role="menu" hidden></div>
+  <div id="toast" role="status" aria-live="polite"></div>
+  <script src="recordings.js"></script>
+</body>
+</html>

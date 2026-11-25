@@ -1161,7 +1161,7 @@ private struct ShortcutSettings: View {
     var body: some View {
         let store = ShortcutStore.shared
         VStack(alignment: .leading, spacing: 22) {
-            ForEach(ShortcutAction.Group.allCases) { group in
+            ForEach(ShortcutAction.Group.allCases.filter { $0 != .recording || LectureController.isSupported }) { group in
                 let actions = ShortcutAction.allCases.filter { $0.group == group }
                 SettingsCard(title: group.title) {
                     ForEach(actions) { action in
