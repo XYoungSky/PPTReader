@@ -54,6 +54,15 @@ struct RecordingStore: Sendable {
         return recording
     }
 
+    /// 读出最新的清单、改完再存回去。录音和转写都会改清单，都通过这里改，不会互相覆盖（都在主线程上调用）。
+    @discardableResult
+    func update(_ id: String, _ change: (inout Recording) -> Void) throws -> Recording? {
+        guard var recording = load(id) else { return nil }
+        change(&recording)
+        try save(recording)
+        return recording
+    }
+
     /// 所有录音，新的在前。读不出清单的文件夹跳过。
     func all() -> [Recording] {
         let ids = (try? FileManager.default.contentsOfDirectory(atPath: root.path)) ?? []

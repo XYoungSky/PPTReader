@@ -286,27 +286,29 @@ final class LectureRecorder {
     /// 分段打开 / 关闭时更新清单。两个事件可能乱序到达（停止时“关闭”在主线程同步处理，
     /// 录音线程上刚发出的“打开”还在排队），所以两边都不假设对方已经处理过。
     private func handle(_ event: SegmentWriter.Event) {
-        guard var recording else { return }
-        let existing = recording.segments.firstIndex { $0.index == event.index }
-        switch event.kind {
-        case .opened:
-            guard existing == nil else { return }
-            recording.segments.append(Recording.Segment(index: event.index, startedAt: event.at, duration: 0,
-                                                        state: .recording, transcribed: false))
-        case .closed(let duration):
-            let state: Recording.Segment.State = duration > 0 ? .complete : .damaged
-            if let existing {
-                recording.segments[existing].duration = duration
-                recording.segments[existing].state = state
-            } else {
-                recording.segments.append(Recording.Segment(index: event.index, startedAt: event.at.addingTimeInterval(-duration),
-                                                            duration: duration, state: state, transcribed: false))
-                recording.segments.sort { $0.index < $1.index }
+        guard let id = recording?.id else { return }
+        let updated = try? store.update(id) { recording in
+            let existing = recording.segments.firstIndex { $0.index == event.index }
+            switch event.kind {
+            case .opened:
+                guard existing == nil else { return }
+                recording.segments.append(Recording.Segment(index: event.index, startedAt: event.at, duration: 0,
+                                                            state: .recording, transcribed: false))
+            case .closed(let duration):
+                let state: Recording.Segment.State = duration > 0 ? .complete : .damaged
+                if let existing {
+                    recording.segments[existing].duration = duration
+                    recording.segments[existing].state = state
+                } else {
+                    recording.segments.append(Recording.Segment(index: event.index, startedAt: event.at.addingTimeInterval(-duration),
+                                                                duration: duration, state: state, transcribed: false))
+                    recording.segments.sort { $0.index < $1.index }
+                }
             }
         }
-        self.recording = recording
-        try? store.save(recording)
-        if case .closed = event.kind { onSegmentClosed?(recording, event.index) }
+        guard let updated else { return }
+        recording = updated
+        if case .closed = event.kind { onSegmentClosed?(updated, event.index) }
     }
 
     private func fail(_ error: Error) {
