@@ -98,6 +98,7 @@ final class LectureController {
             recorder.onBuffer = { buffer, _ in sink(buffer) }
             self.captioner = captioner
             // 上次中途退出的录音：修复清单，把没转写的分段补上
+            transcription.engine = settings.transcriptionEngine
             transcription.repairAll()
         }
     }
@@ -112,12 +113,15 @@ final class LectureController {
         guard Self.isSupported, !isRecording else { return }
         let context = context() ?? Context(title: Self.defaultTitle(), coursePath: nil, deckPath: nil, pages: [])
         let locale = settings.recordingLocale
+        let bitRate = settings.recordingBitRate
+        let limit = RecordingLimit(seconds: Double(settings.recordingLimitHours) * 3600)
+        transcription.engine = settings.transcriptionEngine
         problem = nil
         dismissSaved()
         Task {
             do {
                 try await recorder.start(title: context.title, coursePath: context.coursePath, deckPath: context.deckPath,
-                                         locale: locale)
+                                         locale: locale, bitRate: bitRate, limit: limit)
             } catch {
                 problem = tr("无法开始录音：", "Couldn't start recording: ") + error.localizedDescription
                 return

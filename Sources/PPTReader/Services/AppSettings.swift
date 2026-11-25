@@ -72,6 +72,9 @@ final class AppSettings {
         static let figureOpacity = "ui.figureOpacity"
         static let dragSelectsRegion = "reader.dragSelectsRegion"
         static let recordingLocale = "recording.locale"
+        static let recordingBitRate = "recording.bitRate"
+        static let recordingLimitHours = "recording.limitHours"
+        static let transcriptionEngine = "recording.engine"
     }
 
     @ObservationIgnored private let defaults: UserDefaults
@@ -120,6 +123,11 @@ final class AppSettings {
     var dragSelectsRegion: Bool { didSet { defaults.set(dragSelectsRegion, forKey: Key.dragSelectsRegion) } }
     /// 课堂录音的转写语言（口音），例如 `en_US`。
     var recordingLocale: String { didSet { defaults.set(recordingLocale, forKey: Key.recordingLocale) } }
+    /// 录音码率：32 kbps（3 小时约 46 MB）或 64 kbps（约 90 MB）。
+    var recordingBitRate: Int { didSet { defaults.set(recordingBitRate, forKey: Key.recordingBitRate) } }
+    /// 录满这么多小时自动停止。
+    var recordingLimitHours: Int { didSet { defaults.set(recordingLimitHours, forKey: Key.recordingLimitHours) } }
+    var transcriptionEngine: TranscriptionEngine { didSet { defaults.set(transcriptionEngine.rawValue, forKey: Key.transcriptionEngine) } }
 
     @ObservationIgnored private var keyCache: [UUID: String] = [:]
     /// 也可以通过环境变量提供 Key（便于命令行启动和调试），在服务商没有保存 Key 时使用。
@@ -160,6 +168,9 @@ final class AppSettings {
         chatSerif = defaults.bool(forKey: Key.chatSerif)
         dragSelectsRegion = defaults.bool(forKey: Key.dragSelectsRegion)
         recordingLocale = defaults.string(forKey: Key.recordingLocale) ?? "en_US"
+        recordingBitRate = [32_000, 64_000].contains(defaults.integer(forKey: Key.recordingBitRate)) ? defaults.integer(forKey: Key.recordingBitRate) : 32_000
+        recordingLimitHours = (1...6).contains(defaults.integer(forKey: Key.recordingLimitHours)) ? defaults.integer(forKey: Key.recordingLimitHours) : 3
+        transcriptionEngine = defaults.string(forKey: Key.transcriptionEngine).flatMap(TranscriptionEngine.init(rawValue:)) ?? .speech
         figureOpacity = min(max(defaults.object(forKey: Key.figureOpacity) as? Double ?? 1, Self.figureOpacityRange.lowerBound),
                             Self.figureOpacityRange.upperBound)
         let envKey = ProcessInfo.processInfo.environment["PPTREADER_API_KEY"]?.trimmingCharacters(in: .whitespacesAndNewlines)

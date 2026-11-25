@@ -105,6 +105,20 @@ struct SidebarView: View {
             }
             .buttonStyle(IconButtonStyle())
             .help(tr("学习统计", "Statistics") + ShortcutStore.shared.hint(.statistics))
+            if LectureController.isSupported {
+                // 课堂录音：正在录音时右上角有个红点
+                Button { RecordingsWindow.shared.show(select: model.lectures.recorder.recording?.id) } label: {
+                    Label(tr("课堂录音", "Lectures"), systemImage: "waveform")
+                }
+                .buttonStyle(IconButtonStyle())
+                .overlay(alignment: .topTrailing) {
+                    if model.lectures.isRecording {
+                        Circle().fill(Theme.danger).frame(width: 6, height: 6).offset(x: -5, y: 5)
+                            .allowsHitTesting(false)
+                    }
+                }
+                .help(tr("课堂录音", "Lectures") + ShortcutStore.shared.hint(.recordings))
+            }
             Spacer()
             if model.library.rootURL != nil {
                 Text(tr("\(model.library.fileCount) 个课件", model.library.fileCount == 1 ? "1 file" : "\(model.library.fileCount) files"))
