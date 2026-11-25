@@ -1,8 +1,35 @@
-// 生成 App 图标：swift scripts/make-icon.swift <输出目录>
+// 生成 App 图标：
+//   swift scripts/make-icon.swift build/AppIcon.iconset
+//   iconutil -c icns build/AppIcon.iconset -o Resources/AppIcon.icns
+// 样子：陶土色底，一张白色的横向幻灯片，中间一颗星（AI 讲课件）。颜色和应用里的强调色一致。
 import AppKit
 
 let output = URL(fileURLWithPath: CommandLine.arguments.count > 1 ? CommandLine.arguments[1] : "AppIcon.iconset")
 try? FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+
+func rgb(_ hex: UInt32, _ alpha: CGFloat = 1) -> CGColor {
+    CGColor(srgbRed: CGFloat((hex >> 16) & 0xff) / 255, green: CGFloat((hex >> 8) & 0xff) / 255,
+            blue: CGFloat(hex & 0xff) / 255, alpha: alpha)
+}
+
+/// 从上到下的渐变。
+func fillVertical(_ ctx: CGContext, _ top: UInt32, _ bottom: UInt32, in rect: CGRect) {
+    let gradient = CGGradient(colorsSpace: CGColorSpace(name: CGColorSpace.sRGB), colors: [rgb(top), rgb(bottom)] as CFArray, locations: [0, 1])!
+    ctx.drawLinearGradient(gradient, start: CGPoint(x: rect.midX, y: rect.maxY), end: CGPoint(x: rect.midX, y: rect.minY), options: [])
+}
+
+/// 四角星：四条边向中心收的弧线。
+func sparkle(_ ctx: CGContext, center c: CGPoint, radius r: CGFloat) {
+    let k = r * 0.16
+    let path = CGMutablePath()
+    path.move(to: CGPoint(x: c.x, y: c.y + r))
+    path.addQuadCurve(to: CGPoint(x: c.x + r, y: c.y), control: CGPoint(x: c.x + k, y: c.y + k))
+    path.addQuadCurve(to: CGPoint(x: c.x, y: c.y - r), control: CGPoint(x: c.x + k, y: c.y - k))
+    path.addQuadCurve(to: CGPoint(x: c.x - r, y: c.y), control: CGPoint(x: c.x - k, y: c.y - k))
+    path.addQuadCurve(to: CGPoint(x: c.x, y: c.y + r), control: CGPoint(x: c.x - k, y: c.y + k))
+    ctx.addPath(path)
+    ctx.fillPath()
+}
 
 func render(size: Int) -> Data {
     let s = CGFloat(size)
@@ -13,57 +40,42 @@ func render(size: Int) -> Data {
     NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
     let ctx = NSGraphicsContext.current!.cgContext
 
-    // macOS 图标网格：内容区约占 80%，圆角约 22.5%
-    let inset = s * 0.1
-    let rect = CGRect(x: inset, y: inset, width: s - inset * 2, height: s - inset * 2)
-    let radius = rect.width * 0.225
-    let path = CGPath(roundedRect: rect, cornerWidth: radius, cornerHeight: radius, transform: nil)
-
+    // macOS 图标网格：1024 的画布里内容占 824，圆角半径约 185
+    let inset = s * 100 / 1024
+    let tile = CGRect(x: inset, y: inset, width: s - inset * 2, height: s - inset * 2)
+    let corner = tile.width * 0.225
+    let shape = CGPath(roundedRect: tile, cornerWidth: corner, cornerHeight: corner, transform: nil)
     ctx.saveGState()
-    ctx.setShadow(offset: CGSize(width: 0, height: -s * 0.012), blur: s * 0.03, color: NSColor.black.withAlphaComponent(0.28).cgColor)
-    ctx.addPath(path)
-    ctx.setFillColor(NSColor.black.cgColor)
+    ctx.setShadow(offset: CGSize(width: 0, height: -s * 0.010), blur: s * 0.028, color: rgb(0x000000, 0.22))
+    ctx.addPath(shape)
+    ctx.setFillColor(rgb(0xC0573A))
     ctx.fillPath()
     ctx.restoreGState()
 
     ctx.saveGState()
-    ctx.addPath(path)
+    ctx.addPath(shape)
     ctx.clip()
-    let colors = [NSColor(red: 0.24, green: 0.42, blue: 0.95, alpha: 1).cgColor,
-                  NSColor(red: 0.43, green: 0.30, blue: 0.88, alpha: 1).cgColor] as CFArray
-    let gradient = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: colors, locations: [0, 1])!
-    ctx.drawLinearGradient(gradient, start: CGPoint(x: rect.minX, y: rect.maxY), end: CGPoint(x: rect.maxX, y: rect.minY), options: [])
+    fillVertical(ctx, 0xE2825F, 0xC0573A, in: tile)
 
-    // 课件页
-    let page = CGRect(x: rect.minX + rect.width * 0.2, y: rect.minY + rect.height * 0.2,
-                      width: rect.width * 0.48, height: rect.height * 0.6)
-    ctx.setFillColor(NSColor.white.withAlphaComponent(0.96).cgColor)
-    ctx.addPath(CGPath(roundedRect: page, cornerWidth: rect.width * 0.05, cornerHeight: rect.width * 0.05, transform: nil))
+    // 幻灯片
+    let u = tile.width
+    let slide = CGRect(x: tile.midX - u * 0.30, y: tile.midY - u * 0.21, width: u * 0.60, height: u * 0.42)
+    let slidePath = CGPath(roundedRect: slide, cornerWidth: u * 0.065, cornerHeight: u * 0.065, transform: nil)
+    ctx.saveGState()
+    ctx.setShadow(offset: CGSize(width: 0, height: -u * 0.012), blur: u * 0.04, color: rgb(0x000000, 0.12))
+    ctx.addPath(slidePath)
+    ctx.setFillColor(rgb(0xF6F1E9))
     ctx.fillPath()
-    ctx.setFillColor(NSColor(red: 0.30, green: 0.40, blue: 0.85, alpha: 0.35).cgColor)
-    for i in 0..<4 {
-        let w = page.width * (i == 0 ? 0.62 : (i == 3 ? 0.45 : 0.72))
-        let y = page.maxY - page.height * (0.2 + CGFloat(i) * 0.16)
-        let bar = CGRect(x: page.minX + page.width * 0.14, y: y, width: w, height: page.height * 0.065)
-        ctx.addPath(CGPath(roundedRect: bar, cornerWidth: bar.height / 2, cornerHeight: bar.height / 2, transform: nil))
-        ctx.fillPath()
-    }
+    ctx.restoreGState()
+    ctx.saveGState()
+    ctx.addPath(slidePath)
+    ctx.clip()
+    fillVertical(ctx, 0xFFFFFF, 0xF6F1E9, in: slide)
+    ctx.restoreGState()
 
-    // 星光
-    func sparkle(center: CGPoint, r: CGFloat) {
-        let p = CGMutablePath()
-        p.move(to: CGPoint(x: center.x, y: center.y + r))
-        p.addQuadCurve(to: CGPoint(x: center.x + r, y: center.y), control: CGPoint(x: center.x + r * 0.15, y: center.y + r * 0.15))
-        p.addQuadCurve(to: CGPoint(x: center.x, y: center.y - r), control: CGPoint(x: center.x + r * 0.15, y: center.y - r * 0.15))
-        p.addQuadCurve(to: CGPoint(x: center.x - r, y: center.y), control: CGPoint(x: center.x - r * 0.15, y: center.y - r * 0.15))
-        p.addQuadCurve(to: CGPoint(x: center.x, y: center.y + r), control: CGPoint(x: center.x - r * 0.15, y: center.y + r * 0.15))
-        ctx.addPath(p)
-        ctx.fillPath()
-    }
-    ctx.setFillColor(NSColor(red: 1, green: 0.85, blue: 0.35, alpha: 1).cgColor)
-    sparkle(center: CGPoint(x: rect.minX + rect.width * 0.74, y: rect.minY + rect.height * 0.36), r: rect.width * 0.16)
-    ctx.setFillColor(NSColor.white.cgColor)
-    sparkle(center: CGPoint(x: rect.minX + rect.width * 0.82, y: rect.minY + rect.height * 0.6), r: rect.width * 0.07)
+    // 星
+    ctx.setFillColor(rgb(0xCF6A47))
+    sparkle(ctx, center: CGPoint(x: slide.midX, y: slide.midY), radius: u * 0.13)
     ctx.restoreGState()
 
     NSGraphicsContext.restoreGraphicsState()

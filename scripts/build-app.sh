@@ -1,7 +1,7 @@
 #!/bin/zsh
 # 编译并打包 PPTReader.app。用法：
 #   ./scripts/build-app.sh            # 生成 build/Products.noindex/PPTReader.app
-#   ./scripts/build-app.sh --install  # 同时复制到 /Applications
+#   ./scripts/build-app.sh --install  # 直接安装到 /Applications（不在 build/ 留副本）
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -39,12 +39,17 @@ fi
 codesign --verify --deep --strict "$STAGED"
 
 rm -rf "$APP"
-mkdir -p "$(dirname "$APP")"
-ditto "$STAGED" "$APP"
-echo "✅ 已生成 $APP（$(du -sh "$APP" | cut -f1)，$SIGNED_WITH）"
-
 if [[ "${1:-}" == "--install" ]]; then
+  # 安装时不在构建目录留副本：系统会在后台把新出现的 .app 登记进“打开方式”和应用列表，
+  # 留着就会出现两个 PPTReader。只留 /Applications 这一份。
+  LSREGISTER=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
+  "$LSREGISTER" -u "$PWD/$APP" 2>/dev/null || true
   rm -rf "/Applications/PPTReader.app"
   ditto "$STAGED" /Applications/PPTReader.app
-  echo "✅ 已安装到 /Applications/PPTReader.app"
+  "$LSREGISTER" -f /Applications/PPTReader.app 2>/dev/null || true
+  echo "已安装到 /Applications/PPTReader.app（$(du -sh /Applications/PPTReader.app | cut -f1)，$SIGNED_WITH）"
+else
+  mkdir -p "$(dirname "$APP")"
+  ditto "$STAGED" "$APP"
+  echo "已生成 $APP（$(du -sh "$APP" | cut -f1)，$SIGNED_WITH）"
 fi

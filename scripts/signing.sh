@@ -87,7 +87,7 @@ EOF
       -passout "pass:$p12pw" -name "$NAME"
     pw=$(new_keychain)
     import_p12 "$work/id.p12" "$p12pw" "$pw"
-    echo "✅ 已生成证书 “$NAME”（SHA-1 $(identity)）"
+    echo "已生成证书 “$NAME”（SHA-1 $(identity)）"
     echo "   建议备份：./scripts/signing.sh export ~/Documents/PPTReader-Signing.p12"
     ;;
   import)
@@ -95,7 +95,7 @@ EOF
     read -rs "p12pw?备份的密码：" && echo
     pw=$(new_keychain)
     import_p12 "$file" "$p12pw" "$pw"
-    echo "✅ 已导入证书 “$NAME”（SHA-1 $(identity)）"
+    echo "已导入证书 “$NAME”（SHA-1 $(identity)）"
     ;;
   export)
     file="${2:?用法：./scripts/signing.sh export <文件.p12>}"
@@ -118,7 +118,7 @@ EOF
     fi
     printf '' | pbcopy
     chmod 600 "$file"
-    echo "✅ 已导出到 $file。私钥在里面，不要放进项目目录或公开的地方。"
+    echo "已导出到 $file。私钥在里面，不要放进项目目录或公开的地方。"
     ;;
   status)
     if sha=$(unlock); then
