@@ -9,7 +9,10 @@
 <body>
   <aside id="sidebar">
     <div class="sidebar-head">
-      <h2 id="list-title"></h2>
+      <div class="list-title-row">
+        <h2 id="list-title"></h2>
+        <button type="button" id="import" class="icon"></button>
+      </div>
       <label id="list-search">
         <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="m10.5 10.5 3 3"/></svg>
         <input type="search" id="list-search-input">
@@ -24,6 +27,7 @@
         <h1 id="title"></h1>
         <span class="spacer"></span>
         <button type="button" id="organize" class="primary"></button>
+        <button type="button" id="export" class="icon" aria-haspopup="menu"></button>
         <button type="button" id="more" class="icon" aria-haspopup="menu"></button>
       </div>
       <p id="meta"></p>
@@ -43,9 +47,11 @@
       </div>
 
       <div class="tabs-row">
-        <div id="tabs" role="tablist"></div>
+        <div class="tabs-wrap">
+          <div id="tabs" role="tablist"></div>
+          <span id="tab-indicator" aria-hidden="true"></span>
+        </div>
         <span class="spacer"></span>
-        <button type="button" id="export" class="icon" title=""></button>
         <label id="search">
           <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="m10.5 10.5 3 3"/></svg>
           <input type="search" id="search-input">
@@ -53,12 +59,16 @@
       </div>
     </header>
 
-    <section id="content"></section>
+    <section id="content">
+      <div id="organize-slot"></div>
+      <div id="tab-body"></div>
+    </section>
   </main>
 
   <section id="empty" hidden>
     <div class="empty-icon" aria-hidden="true"></div>
     <p id="empty-text"></p>
+    <button type="button" id="empty-import" class="secondary"></button>
   </section>
 
   <div id="menu" role="menu" hidden></div>

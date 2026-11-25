@@ -4,9 +4,11 @@ import WebKit
 
 /// 传给 recordings.html 的数据。纯函数，方便测试。
 enum RecordingsPayload {
-    enum Status: String { case recording, transcribing, ready }
+    enum Status: String { case recording, importing, transcribing, ready }
 
-    static func item(_ recording: Recording, status: Status, elapsed: Double? = nil, organized: Bool = false) -> [String: Any] {
+    /// - Parameter progress: 正在导入时的进度（0…1）。
+    static func item(_ recording: Recording, status: Status, elapsed: Double? = nil, organized: Bool = false,
+                     progress: Double? = nil) -> [String: Any] {
         var item: [String: Any] = [
             "id": recording.id,
             "title": recording.title,
@@ -18,6 +20,7 @@ enum RecordingsPayload {
         ]
         if let course = recording.coursePath { item["course"] = URL(fileURLWithPath: course).lastPathComponent }
         if let elapsed { item["elapsed"] = elapsed }
+        if let progress { item["progress"] = progress }
         return item
     }
 
@@ -25,7 +28,7 @@ enum RecordingsPayload {
     ///   - queued: 正在排队或正在转写的分段。
     ///   - live: 正在录音时的实时字幕（定稿的文字、还会变的文字）。
     static func detail(_ recording: Recording, lines: [TranscriptLine], status: Status, queued: Set<Int>,
-                       duration: Double? = nil, live: (String, String)? = nil) -> [String: Any] {
+                       duration: Double? = nil, live: (String, String)? = nil, progress: Double? = nil) -> [String: Any] {
         var payload: [String: Any] = [
             "id": recording.id,
             "title": recording.title,
@@ -40,7 +43,7 @@ enum RecordingsPayload {
                     "duration": segment.duration,
                     "state": segment.state.rawValue,
                     "transcribed": segment.transcribed,
-                    "queued": queued.contains(segment.index) || status == .recording,
+                    "queued": queued.contains(segment.index) || status == .recording || status == .importing,
                 ]
             },
             // 换算成录音时间；损坏分段里的句子（不应该有）没法回放，去掉
@@ -52,6 +55,7 @@ enum RecordingsPayload {
         ]
         if let deck = recording.deckPath { payload["deck"] = URL(fileURLWithPath: deck).lastPathComponent }
         if let live { payload["live"] = ["text": live.0, "volatile": live.1] }
+        if let progress { payload["progress"] = progress }
         return payload
     }
 
@@ -116,7 +120,7 @@ enum RecordingsPayload {
             if !item.quote.isEmpty { line += "\n  > “\(item.quote)”" }
             return line
         }
-        if chosen.isEmpty { return output + "\n" + tr("（没有）", "(none)") + "\n" }
+        if chosen.isEmpty { return output + "\n" + tr("（无）", "(none)") + "\n" }
         if kind == .arrangement {
             for item in chosen.sorted(by: { $0.time < $1.time }) {
                 var line = entry(item, page: false)
@@ -130,7 +134,7 @@ enum RecordingsPayload {
         }
         let groups = Dictionary(grouping: chosen) { $0.deck ?? "" }
         for key in groups.keys.sorted(by: { ($0.isEmpty ? 1 : 0, $0) < ($1.isEmpty ? 1 : 0, $1) }) {
-            let heading = key.isEmpty ? tr("对不上课件的页", "Not tied to a slide") : URL(fileURLWithPath: key).deletingPathExtension().lastPathComponent
+            let heading = key.isEmpty ? tr("未对应课件页", "Not tied to a slide") : URL(fileURLWithPath: key).deletingPathExtension().lastPathComponent
             output += "\n## \(heading)\n"
             for item in groups[key]!.sorted(by: { ($0.page ?? 0, $0.time) < ($1.page ?? 0, $1.time) }) {
                 output += "\n" + entry(item, page: true)
@@ -197,6 +201,7 @@ final class RecordingsWindow: NSObject {
 
     private func status(of recording: Recording) -> RecordingsPayload.Status {
         if let lectures, lectures.isRecording, lectures.recorder.recording?.id == recording.id { return .recording }
+        if lectures?.importing[recording.id] != nil { return .importing }
         if lectures?.transcription.isBusy(with: recording.id) == true { return .transcribing }
         return .ready
     }
@@ -221,7 +226,8 @@ final class RecordingsWindow: NSObject {
             "items": recordings.map { recording in
                 let status = status(of: recording)
                 return RecordingsPayload.item(recording, status: status, elapsed: status == .recording ? elapsed : nil,
-                                              organized: store.organized(recording.id) != nil)
+                                              organized: store.organized(recording.id) != nil,
+                                              progress: lectures?.importing[recording.id])
             },
         ])
         return recordings
@@ -240,7 +246,8 @@ final class RecordingsWindow: NSObject {
             duration = lectures.recorder.elapsed
         }
         var payload = RecordingsPayload.detail(recording, lines: store.transcript(recording.id), status: status,
-                                               queued: queued, duration: duration, live: live)
+                                               queued: queued, duration: duration, live: live,
+                                               progress: lectures?.importing[recording.id])
         if let result = store.organized(recording.id) { payload["supplements"] = RecordingsPayload.supplements(result) }
         if let corrections = store.corrections(recording.id) {
             payload["corrections"] = corrections.lines.map { ["segment": $0.segment, "start": $0.start, "text": $0.text] as [String: Any] }
@@ -249,7 +256,8 @@ final class RecordingsWindow: NSObject {
             payload["organize"] = RecordingsPayload.organize(state, recordedDeck: recording.deckPath)
         }
         send("Recordings.showDetail", payload)
-        player.load(status == .recording ? nil : recording, store: store)
+        // 录音中、导入中的分段还在增加，先不回放
+        player.load(status == .recording || status == .importing ? nil : recording, store: store)
     }
 
     /// 录音时每秒更新一次列表里的时长。
@@ -301,6 +309,8 @@ final class RecordingsWindow: NSObject {
         case "exportText": if let id { exportTab(id, tab: "transcript") }
         case "exportTab": if let id { exportTab(id, tab: dict["tab"] as? String ?? "transcript") }
         case "delete": if let id { delete(id) }
+        case "import": chooseImport()
+        case "retranscribe": if let id { retranscribe(id) }
         default: break
         }
     }
@@ -329,7 +339,7 @@ final class RecordingsWindow: NSObject {
         guard let recording = store.load(id), let panel else { return }
         let alert = NSAlert()
         alert.messageText = tr("编辑标签", "Edit Tags")
-        alert.informativeText = tr("用逗号分开，第一个标签用来分组，通常是课程编号。", "Separate tags with commas. The first one groups the list; usually it's the course code.")
+        alert.informativeText = tr("以逗号分隔。第一个标签用于分组，通常为课程编号。", "Separate with commas. The first tag is used for grouping, usually the course code.")
         alert.addButton(withTitle: tr("好", "OK"))
         alert.addButton(withTitle: tr("取消", "Cancel"))
         let field = NSTextField(string: recording.displayTags.joined(separator: ", "))
@@ -368,7 +378,7 @@ final class RecordingsWindow: NSObject {
             content = { [store] in RecordingsPayload.text(recording, lines: store.transcript(id)) }
         }
         guard content() != nil else {
-            send("Recordings.toast", tr("还没有可以导出的内容，先点「AI 整理」", "Nothing to export yet; organize the lecture first"))
+            send("Recordings.toast", tr("暂无可导出的内容，请先进行 AI 整理", "Nothing to export. Organize the lecture first."))
             return
         }
         let save = NSSavePanel()
@@ -410,15 +420,67 @@ final class RecordingsWindow: NSObject {
         }
     }
 
+    /// 选择要导入的音频文件（可以多选），归到当前打开的课程文件夹。
+    func chooseImport() {
+        guard let lectures else { return }
+        show()
+        let open = NSOpenPanel()
+        open.allowedContentTypes = AudioImporter.contentTypes
+        open.allowsMultipleSelection = true
+        open.canChooseDirectories = false
+        open.message = tr("选择要导入的录音（音频或视频文件）", "Choose recordings to import (audio or video files)")
+        open.prompt = tr("导入", "Import")
+        let handle: (NSApplication.ModalResponse) -> Void = { response in
+            guard response == .OK else { return }
+            lectures.importAudio(open.urls)
+        }
+        if let panel { open.beginSheetModal(for: panel, completionHandler: handle) } else { handle(open.runModal()) }
+    }
+
+    private func retranscribe(_ id: String) {
+        guard let recording = store.load(id), let panel, let lectures, let settings = SettingsWindow.model?.settings else { return }
+        guard status(of: recording) == .ready else {
+            send("Recordings.toast", tr("录音、导入或转写完成后才能重新转写", "Available after recording, import and transcription finish"))
+            return
+        }
+        let engine: String = switch settings.transcriptionEngine {
+        case .speech: tr("标准", "Standard")
+        case .dictation: tr("听写", "Dictation")
+        case .whisper: WhisperModel.isDownloaded ? "Whisper" : tr("标准（Whisper 模型未下载）", "Standard (Whisper model not downloaded)")
+        }
+        let alert = NSAlert()
+        alert.messageText = tr("重新转写“\(recording.title)”？", "Re-transcribe “\(recording.title)”?")
+        alert.informativeText = tr("将使用「\(engine)」重新转写，现有的转写和纠正版会被替换。",
+                                   "It will be transcribed again with \(engine). The current transcript and corrected version will be replaced.")
+        alert.addButton(withTitle: tr("重新转写", "Re-transcribe"))
+        alert.addButton(withTitle: tr("取消", "Cancel"))
+        alert.beginSheetModal(for: panel) { response in
+            MainActor.assumeIsolated {
+                guard response == .alertFirstButtonReturn else { return }
+                lectures.retranscribe(id)
+            }
+        }
+    }
+
+    func toast(_ message: String) {
+        send("Recordings.toast", message)
+    }
+
     private func delete(_ id: String) {
         guard let recording = store.load(id), let panel else { return }
-        if status(of: recording) == .recording {
-            send("Recordings.toast", tr("正在录音，停止后才能删除", "Stop recording before deleting it"))
+        switch status(of: recording) {
+        case .recording:
+            send("Recordings.toast", tr("录音进行中，停止后方可删除", "Stop recording before deleting."))
             return
+        case .importing:
+            send("Recordings.toast", tr("正在导入，完成后方可删除", "Wait for the import to finish before deleting."))
+            return
+        default:
+            break
         }
         let alert = NSAlert()
         alert.messageText = tr("删除“\(recording.title)”？", "Delete “\(recording.title)”?")
-        alert.informativeText = tr("录音、转写和整理结果都会删除，无法恢复。", "The audio, transcript and organized results will be deleted. This can't be undone.")
+        alert.informativeText = tr("录音、转写和整理结果将被删除，且无法恢复。", "The audio, transcript and organized results will be deleted. This cannot be undone.")
         alert.alertStyle = .warning
         alert.addButton(withTitle: tr("删除", "Delete")).hasDestructiveAction = true
         alert.addButton(withTitle: tr("取消", "Cancel"))

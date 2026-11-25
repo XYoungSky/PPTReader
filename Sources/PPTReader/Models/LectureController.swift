@@ -52,11 +52,13 @@ final class LectureController {
     /// 录音条上方显示实时字幕。
     var showsCaptions: Bool { didSet { UserDefaults.standard.set(showsCaptions, forKey: Self.captionsKey) } }
     private(set) var saved: Saved?
-    /// 开始录音失败、或录音中出错停下的原因。
-    private(set) var problem: String?
+    /// 开始录音失败、录音中出错停下、导入失败的原因。
+    var problem: String?
 
     /// 正在整理的录音（「AI 整理」）。
     var organizing: [String: OrganizeState] = [:]
+    /// 正在导入的录音和进度（0…1）。
+    var importing: [String: Double] = [:]
 
     @ObservationIgnored var context: () -> Context? = { nil }
     @ObservationIgnored let settings: AppSettings

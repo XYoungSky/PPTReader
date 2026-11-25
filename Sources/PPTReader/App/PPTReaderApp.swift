@@ -39,7 +39,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let lectures = SettingsWindow.model?.lectures, lectures.isRecording else { return .terminateNow }
         let alert = NSAlert()
         alert.messageText = tr("正在录音", "Recording in progress")
-        alert.informativeText = tr("退出前会停止录音并保存已经录下的部分。", "Quitting stops the recording and saves what has been recorded.")
+        alert.informativeText = tr("退出将停止录音，并保存已录制的内容。", "Quitting stops the recording and saves what has been recorded.")
         alert.addButton(withTitle: tr("停止录音并退出", "Stop and Quit"))
         alert.addButton(withTitle: tr("取消", "Cancel"))
         guard alert.runModal() == .alertFirstButtonReturn else { return .terminateCancel }
@@ -163,6 +163,8 @@ struct AppCommands: Commands {
             Divider()
             Button(tr("课堂录音", "Lectures")) { RecordingsWindow.shared.show() }
                 .keyboardShortcut(key(.recordings))
+                .disabled(!LectureController.isSupported)
+            Button(tr("导入音频…", "Import Audio…")) { RecordingsWindow.shared.chooseImport() }
                 .disabled(!LectureController.isSupported)
             if !LectureController.isSupported {
                 Text(tr("课堂录音需要 macOS 26 或更新版本", "Lecture recording requires macOS 26 or later"))

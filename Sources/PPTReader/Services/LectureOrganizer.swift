@@ -341,13 +341,13 @@ enum LectureOrganizer {
         if english {
             return prefix + """
             I will send the transcript of the lecture in parts. It comes from on-device speech recognition, which often mishears technical terms, names, acronyms and numbers (e.g. "Dykstra" for Dijkstra, "weight" for wait, "colonel" for kernel).\(reference)
-            Fix only recognition errors: misheard words, and punctuation or sentence breaks that are clearly wrong. Don't rephrase, polish, summarize, translate or drop anything; keep the lecturer's words. If unsure, leave the line as it is.
+            Fix only recognition errors: misheard words, and punctuation or sentence breaks that are clearly wrong. Don't rephrase, polish, summarize, translate or drop anything; keep the lecturer's words. A line that already makes sense in context is not an error, even if a different word seems more likely; if unsure, leave the line as it is.
             Each line starts with its number. Output only the lines you changed, each as the whole corrected line without the number or time: {"fixes":[{"id":12,"text":"…"}]}. If nothing needs fixing, output {"fixes":[]}.
             """
         }
         return prefix + """
         我会分段发给你这节课的转写。它是本机语音识别的结果，常把专业术语、人名、缩写、数字听错（例如把 Dijkstra 写成 Dykstra、把 wait 写成 weight、把 kernel 写成 colonel）。\(reference)
-        只改识别错误：听错的词，以及明显错误的标点和断句。不要改写、润色、概括、翻译或删减内容，保留老师的原话（英文）。拿不准的就不改。
+        只改识别错误：听错的词，以及明显错误的标点和断句。不要改写、润色、概括、翻译或删减内容，保留老师的原话（英文）。原句在上下文里说得通的，即使换个词好像更顺，也不算识别错误；拿不准的就不改。
         每行开头是编号。只输出改过的行，每行给出改正后的整行（不带编号和时间）：{"fixes":[{"id":12,"text":"…"}]}。都不用改时输出 {"fixes":[]}。
         """
     }
@@ -464,6 +464,11 @@ extension RecordingStore {
         decoder.dateDecodingStrategy = .iso8601
         guard let data = try? Data(contentsOf: folder(id).appendingPathComponent(Self.organizedName)) else { return nil }
         return try? decoder.decode(LectureOrganizer.Result.self, from: data)
+    }
+
+    /// 重新转写后，旧的纠正版对不上新的句子，去掉。
+    func removeCorrections(_ id: String) {
+        try? FileManager.default.removeItem(at: folder(id).appendingPathComponent(Self.correctionsName))
     }
 
     static let correctionsName = "corrections.json"

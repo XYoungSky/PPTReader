@@ -90,7 +90,7 @@ struct RecordingsWindowTests {
         let first = arrangements.range(of: "Page 12")!.lowerBound, second = arrangements.range(of: "Exam on Friday")!.lowerBound
         #expect(first < second && arrangements.contains("[1:01:40] Exam on Friday"))
         #expect(!arrangements.contains("**p."))
-        #expect(RecordingsPayload.markdown(recording(), items: [], kind: .arrangement).contains("（没有）") ||
+        #expect(RecordingsPayload.markdown(recording(), items: [], kind: .arrangement).contains("（无）") ||
                 RecordingsPayload.markdown(recording(), items: [], kind: .arrangement).contains("(none)"))
     }
 

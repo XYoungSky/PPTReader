@@ -8,7 +8,12 @@ import Speech
 /// - dictation（DictationTranscriber，远场）：会参考课件里的术语，句子要自己按词的时间戳切。
 /// 哪种更准要拿真实的课堂录音比较，先默认 speech。
 enum TranscriptionEngine: String, Codable, CaseIterable, Sendable {
-    case speech, dictation
+    /// 系统的 SpeechTranscriber。
+    case speech
+    /// 系统的 DictationTranscriber（远场、参考课件术语）。
+    case dictation
+    /// 本机 Whisper（要先下载模型；没下载时按 `speech` 转写）。
+    case whisper
 }
 
 /// 转写结果的整理：切句、从课件里挑术语。都是纯函数，方便测试。
@@ -103,11 +108,13 @@ enum TranscriptText {
 enum TranscriptionFailure: LocalizedError {
     case unavailable
     case unsupportedLocale(String)
+    case whisperMissing
 
     var errorDescription: String? {
         switch self {
         case .unavailable: tr("本机语音转写需要 macOS 26 或更新版本。", "On-device transcription requires macOS 26 or later.")
         case .unsupportedLocale(let id): tr("本机语音转写不支持 \(id)。", "On-device transcription doesn't support \(id).")
+        case .whisperMissing: tr("Whisper 模型尚未下载，请在「设置 → 课堂录音」中下载。", "The Whisper model isn't downloaded. Download it in Settings → Lectures.")
         }
     }
 }
@@ -131,7 +138,7 @@ enum SpeechFileTranscriber {
         try await prepare(locale: locale, engine: engine)
         let file = try AVAudioFile(forReading: url)
         switch engine {
-        case .speech:
+        case .speech, .whisper:
             let transcriber = SpeechTranscriber(locale: locale, transcriptionOptions: [], reportingOptions: [],
                                                 attributeOptions: [.audioTimeRange])
             let analyzer = SpeechAnalyzer(modules: [transcriber])
@@ -174,7 +181,7 @@ enum SpeechFileTranscriber {
 
     private static func module(locale: Locale, engine: TranscriptionEngine) -> any SpeechModule {
         switch engine {
-        case .speech: SpeechTranscriber(locale: locale, preset: .transcription)
+        case .speech, .whisper: SpeechTranscriber(locale: locale, preset: .transcription)
         case .dictation: DictationTranscriber(locale: locale, preset: .longDictation)
         }
     }
@@ -224,8 +231,12 @@ final class TranscriptionQueue {
          transcribe: (@MainActor (URL, Locale, TranscriptionEngine, [String]) async throws -> [TranscriptText.Line])? = nil) {
         self.store = store
         self.transcribe = transcribe ?? { url, locale, engine, terms in
+            // Whisper：模型下载好了才用，否则按标准方式转写（不让分段因为没下模型而转写失败）
+            if engine == .whisper, WhisperModel.isDownloaded {
+                return try await WhisperEngine.shared.transcribe(url, language: WhisperEngine.language(for: locale.identifier))
+            }
             guard #available(macOS 26, *) else { throw TranscriptionFailure.unavailable }
-            return try await SpeechFileTranscriber.transcribe(url, locale: locale, engine: engine, terms: terms)
+            return try await SpeechFileTranscriber.transcribe(url, locale: locale, engine: engine == .whisper ? .speech : engine, terms: terms)
         }
     }
 
