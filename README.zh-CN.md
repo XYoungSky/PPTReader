@@ -40,6 +40,8 @@
 ./scripts/build-app.sh --install  # 同时安装到 /Applications
 ```
 
+默认使用临时签名（ad-hoc），每次重新构建，macOS 都会把它当成新应用，重新询问钥匙串权限。运行一次 `./scripts/signing.sh create` 生成自签名证书，之后的构建都用它签名，升级后权限仍然有效（`./scripts/signing.sh export` 可以导出备份，换电脑打包时用）。
+
 ## 配置
 
 打开 **设置**（⌘,）→ **模型**。点「添加服务商」可从模板新建（最多 5 个），点按列表中的服务商即可切换；下方编辑的是正在使用的服务商：

@@ -26,14 +26,22 @@ cp -R Resources/Web "$STAGED/Contents/Resources/Web"
 # Finder 在资源目录里留下的 .DS_Store 不放进应用包
 find "$STAGED" -name .DS_Store -delete
 xattr -cr "$STAGED"
-# 本地使用的临时签名（ad-hoc），无需开发者账号
-codesign --force --deep --sign - "$STAGED" >/dev/null
+# 有固定的自签名证书（./scripts/signing.sh create）就用它：应用的身份不随构建变化，
+# 升级后钥匙串和麦克风的授权都还有效。没有就退回临时签名（ad-hoc），每次升级都要重新允许。
+SIGN_KEYCHAIN="$HOME/Library/Keychains/PPTReader-Signing.keychain-db"
+if SIGN_ID=$(./scripts/signing.sh unlock 2>/dev/null); then
+  codesign --force --deep --timestamp=none --keychain "$SIGN_KEYCHAIN" --sign "$SIGN_ID" "$STAGED" >/dev/null
+  SIGNED_WITH="证书 PPTReader Signing"
+else
+  codesign --force --deep --sign - "$STAGED" >/dev/null
+  SIGNED_WITH="临时签名（没有固定证书，升级后要重新允许钥匙串；运行 ./scripts/signing.sh create 生成）"
+fi
 codesign --verify --deep --strict "$STAGED"
 
 rm -rf "$APP"
 mkdir -p "$(dirname "$APP")"
 ditto "$STAGED" "$APP"
-echo "✅ 已生成 $APP（$(du -sh "$APP" | cut -f1)）"
+echo "✅ 已生成 $APP（$(du -sh "$APP" | cut -f1)，$SIGNED_WITH）"
 
 if [[ "${1:-}" == "--install" ]]; then
   rm -rf "/Applications/PPTReader.app"

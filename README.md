@@ -40,6 +40,8 @@ To build from source:
 ./scripts/build-app.sh --install  # also copy to /Applications
 ```
 
+The app is ad-hoc signed by default, so every rebuild looks like a new app to macOS and asks again for Keychain access. Run `./scripts/signing.sh create` once to make a self-signed certificate; later builds are signed with it and keep their permissions across upgrades (`./scripts/signing.sh export` backs it up for another Mac).
+
 ## Setup
 
 Open **Settings** (⌘,) → **Model**. Use **Add Provider** to create one from a template (up to 5), and click a provider in the list to switch to it. The fields below edit the provider in use:
