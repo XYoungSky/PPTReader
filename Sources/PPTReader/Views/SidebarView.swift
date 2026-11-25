@@ -36,7 +36,7 @@ struct SidebarView: View {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 1) {
                         if library.nodes.isEmpty {
-                            hint(library.isScanning ? tr("正在扫描…", "Scanning…") : tr("没有课件", "No course files"))
+                            hint(library.isScanning ? tr("正在扫描…", "Scanning…") : tr("无课件", "No decks"))
                         } else if query.isEmpty {
                             ForEach(visibleRows(library.nodes), id: \.node.id) { row in
                                 TreeRow(node: row.node, depth: row.depth,
@@ -49,7 +49,7 @@ struct SidebarView: View {
                         } else {
                             let matches = library.nodes.flatMap(\.allFiles)
                                 .filter { $0.name.localizedCaseInsensitiveContains(query) }
-                            if matches.isEmpty { hint(tr("无匹配", "No matches")) }
+                            if matches.isEmpty { hint(tr("无匹配项", "No matches")) }
                             ForEach(matches) { node in
                                 TreeRow(node: node, depth: 0, isExpanded: false,
                                         isSelected: model.selectedFile == node.url,

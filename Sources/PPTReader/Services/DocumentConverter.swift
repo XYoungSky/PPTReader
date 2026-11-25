@@ -17,7 +17,7 @@ enum ConversionError: LocalizedError {
         case .failed(let message):
             tr("转换失败：", "Conversion failed: ") + message
         case .timedOut:
-            tr("转换超时，请检查 Office 是否弹出了对话框", "Conversion timed out — check whether Office is showing a dialog")
+            tr("转换超时，请检查 Office 是否显示了对话框", "Conversion timed out. Check whether Office is showing a dialog.")
         }
     }
 }

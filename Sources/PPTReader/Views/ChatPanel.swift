@@ -130,7 +130,7 @@ private struct KeyBanner: View {
         HStack(spacing: 8) {
             Image(systemName: "key")
                 .foregroundStyle(Theme.accent)
-            Text(tr("未设置 API Key", "No API key yet"))
+            Text(tr("未设置 API Key", "No API key"))
                 .foregroundStyle(Theme.text2)
             Spacer()
             Button(tr("设置", "Set up")) { SettingsWindow.show() }
@@ -179,7 +179,7 @@ private struct Composer: View {
                     .transition(.asymmetric(insertion: .opacity.combined(with: .offset(y: 6)), removal: .opacity))
             }
 
-            TextField(tr("就这份课件提问…", "Ask about this deck…"), text: $chat.draft, axis: .vertical)
+            TextField(tr("针对本课件提问…", "Ask about this deck…"), text: $chat.draft, axis: .vertical)
                 .textFieldStyle(.plain)
                 .font(.system(size: 14.5))
                 .foregroundStyle(Theme.text)

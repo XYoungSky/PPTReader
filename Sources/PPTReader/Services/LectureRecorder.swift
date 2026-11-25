@@ -98,12 +98,12 @@ enum RecorderError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .microphoneDenied:
-            tr("没有麦克风权限。请到「系统设置 → 隐私与安全性 → 麦克风」里允许 PPTReader。",
+            tr("没有麦克风权限。请在「系统设置 → 隐私与安全性 → 麦克风」中允许 PPTReader。",
                "PPTReader can't use the microphone. Allow it in System Settings → Privacy & Security → Microphone.")
         case .noInput:
-            tr("没有找到可以录音的输入设备。", "No audio input device was found.")
+            tr("未找到可用的音频输入设备。", "No audio input device was found.")
         case .unsupportedFormat:
-            tr("这个输入设备的音频格式无法录音。", "The input device's audio format can't be recorded.")
+            tr("该输入设备的音频格式不受支持。", "The input device's audio format is not supported.")
         }
     }
 }

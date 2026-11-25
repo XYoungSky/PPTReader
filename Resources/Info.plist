@@ -34,7 +34,7 @@
 	<key>NSAppleEventsUsageDescription</key>
 	<string>PPTReader uses PowerPoint or Word to convert slides to PDF (on a copy; originals are never modified). PPTReader 需要调用 PowerPoint / Word 将课件副本转换为 PDF，不会修改原文件。</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>PPTReader records lectures with the microphone and transcribes them on this Mac for your notes; recordings stay on this Mac. PPTReader 用麦克风录下课堂，在本机转写成文字，用来整理笔记，录音只存在这台 Mac 上。</string>
+	<string>PPTReader records lectures with the microphone and transcribes them on this Mac. Recordings stay on this Mac. PPTReader 使用麦克风录制课堂并在本机转写，录音仅保存在本机。</string>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsLocalNetworking</key>

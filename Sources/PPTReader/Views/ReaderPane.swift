@@ -26,7 +26,7 @@ struct ReaderPane: View {
                     .shadow(color: .black.opacity(0.06), radius: 8, y: 2)
                     .padding(.bottom, model.lectures.isRecording ? 64 : 16)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
-                    .help(tr("正在识别没有文字层的页面", "Recognizing pages without a text layer"))
+                    .help(tr("正在识别无文字层的页面", "Recognizing pages without a text layer"))
                 }
             }
             .animation(Motion.panel, value: reader.ocrProgress == nil)

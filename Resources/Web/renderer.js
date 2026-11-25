@@ -309,7 +309,7 @@
       } else if (env && env.streaming) {
         canvas = `<div class="svg-canvas pending"><span class="figure-hint">${t('正在绘制…', 'Drawing…')}</span></div>`;
       } else {
-        canvas = `<div class="svg-canvas pending"><span class="figure-hint error">${t('这张图没有输出完整', 'This diagram was cut off')}</span></div>`;
+        canvas = `<div class="svg-canvas pending"><span class="figure-hint error">${t('图表输出不完整', 'Diagram incomplete')}</span></div>`;
       }
       return `<figure class="svg-figure">${canvas}${complete ? expandButton() : ''}` +
         `<details class="figure-source"${complete || (env && env.streaming) ? '' : ' open'}><summary>${t('源码', 'Source')}</summary>${codeBlock(code, 'xml')}</details></figure>`;
@@ -772,7 +772,7 @@
   function renderUser(entry, m) {
     const meta = [];
     if (m.page) meta.push(`<a data-page="${m.page}">${t(`第 ${m.page} 页`, `Page ${m.page}`)}</a>`);
-    if (m.auto) meta.push(`<span>${t('自动讲解', 'Auto')}</span>`);
+    if (m.auto) meta.push(`<span>${t('自动讲解', 'Auto-explain')}</span>`);
     entry.el.innerHTML =
       '<div class="user-wrap"><div class="bubble">' +
       (m.regionThumb
@@ -1182,9 +1182,9 @@
 
   const SUGGESTIONS = [
     { action: 'explainPage', title: () => t('讲解本页', 'Explain page'), icon: 'M8 1.8 9.3 6.1 13.6 7.5 9.3 8.9 8 13.2 6.7 8.9 2.4 7.5 6.7 6.1Z' },
-    { action: 'summary', title: () => t('总结课件', 'Summarize'), icon: 'M3 4h10M3 8h10M3 12h6' },
+    { action: 'summary', title: () => t('总结课件', 'Summarize deck'), icon: 'M3 4h10M3 8h10M3 12h6' },
     { action: 'outline', title: () => t('知识框架', 'Concept map'), icon: 'M4 4h3v3H4zM9 9h3v3H9zM5.5 7v3.5H9' },
-    { action: 'quiz', title: () => t('练习题', 'Quiz me'), icon: 'M3.5 8.5 6 11l6.5-6.5' },
+    { action: 'quiz', title: () => t('练习题', 'Practice questions'), icon: 'M3.5 8.5 6 11l6.5-6.5' },
   ];
 
   const suggestionIcon = (d) => `<svg viewBox="0 0 16 16" aria-hidden="true"><path d="${d}" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
@@ -1215,11 +1215,13 @@
   function emptyContent() {
     const meta = state.meta;
     if (!meta.hasDocument) {
-      return `<div class="empty-icon">${ICONS.auto}</div><p>${t('打开一个课件开始', 'Open a deck to start')}</p>`;
+      return `<div class="empty-icon">${ICONS.auto}</div><p>${t('打开课件以开始', 'Open a deck to begin')}</p>`;
     }
     return (
       `<div class="empty-icon">${ICONS.auto}</div>` +
-      `<h2>${t('今天想弄懂什么？', 'What shall we learn?')}</h2>` +
+      // 标题用课件名，不用寒暄式的问句
+      `<h2 class="deck-title">${esc(meta.title || t('当前课件', 'This deck'))}</h2>` +
+      (meta.pageCount ? `<p class="deck-pages">${t(`共 ${meta.pageCount} 页`, `${meta.pageCount} pages`)}</p>` : '') +
       '<div class="suggestions">' +
       SUGGESTIONS.map((s) => `<button type="button" class="suggestion" data-action="quick" data-quick="${s.action}">${suggestionIcon(s.icon)}${s.title()}</button>`).join('') +
       '</div>' +

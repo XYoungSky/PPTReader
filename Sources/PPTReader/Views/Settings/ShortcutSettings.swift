@@ -74,7 +74,7 @@ private struct ShortcutRecorder: View {
                 }
             }
             .onHover { hovering = $0 }
-            .help(recording ? tr("⌫ 清除 · esc 取消", "⌫ clear · esc cancel") : tr("点按以录制", "Click to record"))
+            .help(recording ? tr("⌫ 清除 · esc 取消", "⌫ clear · esc cancel") : tr("点按录制", "Click to record"))
         }
         .animation(Motion.hover, value: hovering)
         .animation(Motion.content, value: recording)

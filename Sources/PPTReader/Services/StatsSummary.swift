@@ -230,7 +230,7 @@ private func bucketStart(_ date: Date, unit: StatsSummary.Unit, calendar: Calend
 enum StatsFormat {
     /// 例如「2 小时 15 分钟」「45 分钟」。
     static func duration(_ seconds: Double) -> String {
-        if seconds > 0 && seconds < 60 { return tr("不到 1 分钟", "< 1 min") }
+        if seconds > 0 && seconds < 60 { return tr("不足 1 分钟", "< 1 min") }
         let minutes = Int((seconds / 60).rounded())
         let hours = minutes / 60
         let rest = minutes % 60

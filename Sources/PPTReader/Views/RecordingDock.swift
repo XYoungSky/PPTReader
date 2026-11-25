@@ -54,7 +54,7 @@ struct RecordingDock: View {
 
     static func length(_ seconds: Double) -> String {
         let minutes = Int((seconds / 60).rounded())
-        if minutes < 1 { return tr("不到 1 分钟", "under a minute") }
+        if minutes < 1 { return tr("不足 1 分钟", "less than a minute") }
         if minutes < 60 { return tr("\(minutes) 分钟", "\(minutes) min") }
         let rest = minutes % 60
         return rest == 0 ? tr("\(minutes / 60) 小时", "\(minutes / 60) h") : tr("\(minutes / 60) 小时 \(rest) 分", "\(minutes / 60) h \(rest) min")
@@ -86,7 +86,7 @@ private struct RecordingCapsule: View {
                         .font(.system(size: 12))
                         .foregroundStyle(Theme.text3)
                 } else if case .warning(let remaining) = recorder.limitStatus {
-                    Text(tr("还剩 \(max(1, Int((remaining / 60).rounded(.up)))) 分钟", "\(max(1, Int((remaining / 60).rounded(.up)))) min left"))
+                    Text(tr("剩余 \(max(1, Int((remaining / 60).rounded(.up)))) 分钟", "\(max(1, Int((remaining / 60).rounded(.up)))) min left"))
                         .font(.system(size: 11.5, weight: .semibold))
                         .foregroundStyle(Theme.accent)
                         .padding(.horizontal, 8)
@@ -117,7 +117,7 @@ private struct RecordingCapsule: View {
             } else {
                 Button { lectures.pause() } label: { Label(tr("暂停", "Pause"), systemImage: "pause") }
                     .buttonStyle(IconButtonStyle(size: 30))
-                    .help(tr("暂停录音（暂停时退出也不会丢失）", "Pause recording (nothing is lost if you quit while paused)"))
+                    .help(tr("暂停录音", "Pause recording"))
             }
             Button { lectures.stop() } label: {
                 Label {
@@ -271,7 +271,7 @@ struct RecordButton: View {
             }
         }
         .buttonStyle(IconButtonStyle())
-        .help((recording ? tr("停止录音", "Stop recording") : tr("开始录音（右键选择转写语言）", "Start recording (right-click to choose the transcription language)"))
+        .help((recording ? tr("停止录音", "Stop recording") : tr("开始录音 · 右键选择转写语言", "Start recording · Right-click for language"))
               + ShortcutStore.shared.hint(.record))
         .contextMenu { RecordingMenuItems() }
     }

@@ -123,7 +123,7 @@ struct StatsView: View {
                     .padding(.horizontal, 9)
                     .frame(height: 24)
                     .background(Capsule().fill(Theme.hover))
-                    .help(tr("今天或昨天起连续学习的天数", "Consecutive days of study up to today"))
+                    .help(tr("截至今天的连续学习天数", "Consecutive days of study"))
             }
             Spacer(minLength: 12)
             SegmentedPicker(selection: $period, options: StatsSummary.Period.allCases.map { ($0, $0.title) })
@@ -156,7 +156,7 @@ struct StatsView: View {
                      caption: tr("讲解 \(summary.explains) · 提问 \(summary.questions)", "\(summary.explains) explain · \(summary.questions) ask"))
             StatTile(label: tr("Token 用量", "Tokens"), value: StatsFormat.compact(tokens.total), caption: tokenCaption)
                 .help(tr("输入 ", "Input ") + StatsFormat.compact(tokens.prompt) + " · " + tr("输出 ", "Output ") + StatsFormat.compact(tokens.completion)
-                      + (cost.map { tr("\n花费 ", "\nSpent ") + $0 + tr("：服务商报告的实际费用，只含报告了费用的请求（OpenRouter）",
+                      + (cost.map { tr("\n花费 ", "\nSpent ") + $0 + tr("：服务商报告的实际费用，仅含报告费用的请求（OpenRouter）",
                                                                      ": as reported by the provider, only for requests that report it (OpenRouter)") } ?? ""))
         }
     }
@@ -232,7 +232,7 @@ private struct EmptyStats: View {
                 .foregroundStyle(Theme.accent)
                 .frame(width: 52, height: 52)
                 .background(Circle().fill(Theme.accent.opacity(0.1)))
-            Text(tr("还没有学习记录", "No study history yet"))
+            Text(tr("暂无学习记录", "No study history"))
                 .font(.system(size: 15, weight: .semibold))
                 .foregroundStyle(Theme.text)
         }
@@ -815,7 +815,7 @@ private struct TaskList: View {
     }
 
     private var note: some View {
-        Text(tr("1.9 起按任务记录", "Recorded by task since 1.9"))
+        Text(tr("自 1.9 版起按任务记录", "Recorded by task since version 1.9"))
             .font(.system(size: 11))
             .foregroundStyle(Theme.text3)
             .padding(.trailing, 4)

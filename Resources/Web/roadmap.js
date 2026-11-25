@@ -268,7 +268,7 @@
     $meta.textContent = t(`共 ${data.pageCount} 页`, `${data.pageCount} pages`);
     $('regenerate').textContent = t('重新生成', 'Regenerate');
     const legend = document.querySelectorAll('.legend span');
-    [t('没碰过', 'Not yet'), t('碰过一部分', 'Partly'), t('碰过了', 'Done')].forEach((label, i) => {
+    [t('未覆盖', 'Not covered'), t('部分覆盖', 'Partly covered'), t('已覆盖', 'Covered')].forEach((label, i) => {
       legend[i].lastChild.textContent = label;
     });
 
@@ -276,11 +276,11 @@
     const next = nextUntouched(left);
     if (left.length === 0) {
       $remaining.className = 'all-done';
-      $remaining.innerHTML = CHECK + `<span>${t('每一页都碰过了', 'Every page has been covered')}</span>`;
+      $remaining.innerHTML = CHECK + `<span>${t('所有页面均已覆盖', 'All pages covered')}</span>`;
     } else {
       $remaining.className = '';
       $remaining.innerHTML = t(
-        `还有 <span class="count">${left.length}</span> 页没碰过<span class="next">· 下一页：第 ${next} 页</span>`,
+        `还有 <span class="count">${left.length}</span> 页未覆盖<span class="next">· 下一页：第 ${next} 页</span>`,
         `<span class="count">${left.length}</span> ${left.length === 1 ? 'page' : 'pages'} not yet covered<span class="next">· next: page ${next}</span>`,
       ) + ARROW;
     }
@@ -301,7 +301,7 @@
       const page = Number(tick.dataset.page);
       tick.className = (touched.has(page) ? 'touched' : '') + (inOutline.has(page) ? '' : ' outside')
         + (page === current ? ' current' : '');
-      tick.setAttribute('aria-label', t(`第 ${page} 页`, `Page ${page}`) + (touched.has(page) ? t('，碰过', ', covered') : ''));
+      tick.setAttribute('aria-label', t(`第 ${page} 页`, `Page ${page}`) + (touched.has(page) ? t('，已覆盖', ', covered') : ''));
     }
   }
 
@@ -317,7 +317,7 @@
     const range = node.start === node.end ? t(`第 ${node.start} 页`, `Page ${node.start}`) : t(`第 ${node.start}–${node.end} 页`, `Pages ${node.start}–${node.end}`);
     // 只给数字：进度，部分完成时再列出剩余的页
     let progress = t(`进度 ${s.done}/${s.total}`, `${s.done}/${s.total} covered`);
-    if (s.done > 0 && s.left.length) progress += t(` · 剩余第 ${pageList(s.left)} 页`, ` · remaining: ${pageList(s.left)}`);
+    if (s.done > 0 && s.left.length) progress += t(` · 未覆盖：第 ${pageList(s.left)} 页`, ` · not covered: ${pageList(s.left)}`);
     return plain ? `${range}，${progress}` : `<strong>${range}</strong> · ${progress}`;
   }
 

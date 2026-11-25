@@ -50,7 +50,7 @@ final class RoadmapWindow: NSObject {
         guard let model, let reader = model.reader, let path = model.chat.deckPath else {
             deck = nil
             outline = nil
-            showStatus("noDeck", message: tr("打开一份课件后，这里会显示它的学习路线图。", "Open a deck to see its study roadmap here."))
+            showStatus("noDeck", message: tr("打开课件后显示其学习路线图。", "Open a deck to see its study roadmap."))
             return
         }
         if path != deck {
@@ -81,8 +81,8 @@ final class RoadmapWindow: NSObject {
             }
             guard generateIfMissing else {
                 if self.deck == path {
-                    self.showStatus("empty", message: tr("这份课件还没有路线图。生成时会把课件文字交给“生成路线图大纲”任务的模型整理一次，之后读缓存。",
-                                                         "This deck has no roadmap yet. Generating sends the deck's text to the Roadmap outline model once; after that it's cached."),
+                    self.showStatus("empty", message: tr("本课件尚无路线图。生成时将课件文字发送给模型，每份课件仅需一次。",
+                                                         "No roadmap yet. Generating sends the deck's text to the model once per deck."),
                                     action: tr("生成路线图", "Generate roadmap"))
                 }
                 return

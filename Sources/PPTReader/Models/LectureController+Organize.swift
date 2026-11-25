@@ -28,13 +28,13 @@ extension LectureController {
         var errorDescription: String? {
             switch self {
             case .noTranscript:
-                tr("这段录音还没有转写内容，没法整理。", "This recording has no transcript yet, so there's nothing to organize.")
+                tr("该录音尚无转写内容，无法整理。", "This recording has no transcript to organize.")
             case .notConfigured:
-                tr("还没有设置 API Key。请先在「设置 → 模型」里填好。", "No API key yet. Add one in Settings → Model first.")
+                tr("尚未设置 API Key，请在「设置 → 模型」中填写。", "No API key. Add one in Settings → Model.")
             case .unreadable(let truncated):
                 truncated
-                    ? tr("模型的回答太长被截断了，没能读出结果。可以换一个输出上限更大的模型再试。", "The model's answer was cut off, so it couldn't be read. Try a model with a larger output limit.")
-                    : tr("没能读出模型返回的结果，可以再试一次或换个模型。", "Couldn't read the model's answer. Try again or use another model.")
+                    ? tr("模型输出过长被截断，无法解析结果。请换用输出上限更大的模型。", "The model's output was truncated and could not be parsed. Use a model with a larger output limit.")
+                    : tr("无法解析模型返回的结果，请重试或更换模型。", "Could not parse the model's response. Try again or use another model.")
             }
         }
     }
@@ -191,7 +191,7 @@ extension LectureController {
         var items: [LectureOrganizer.Supplement] = []
         for (index, part) in correctedParts.enumerated() {
             try Task.checkCancellation()
-            let what = decks.isEmpty ? tr("找课程安排", "Looking for course arrangements") : tr("对照课件找要点", "Comparing with the slides")
+            let what = decks.isEmpty ? tr("整理课程安排", "Extracting course arrangements") : tr("对照课件整理要点", "Comparing with the slides")
             organizing[id] = .running(step: 3, message: correctedParts.count > 1
                                       ? tr("\(what)（第 \(index + 1)/\(correctedParts.count) 段）", "\(what) (part \(index + 1) of \(correctedParts.count))")
                                       : what + "…",

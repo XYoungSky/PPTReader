@@ -94,19 +94,74 @@ struct ThemedField: View {
     }
 }
 
+/// 说明文字收进标题旁边的 ⓘ：鼠标移上去很快弹出小气泡，移开收起；点按后固定显示，点别处关闭。
+/// 页面上只留简短的标题和状态。（系统的 `.help` 要停一秒多，在设置窗口里有时不出现，也点不开，所以不用它。）
+struct InfoTip: View {
+    let text: String
+    @ViewState private var shown = false
+    /// 点按打开的：鼠标移开也不收起。
+    @ViewState private var pinned = false
+    @ViewState private var hovering = false
+
+    var body: some View {
+        Image(systemName: "info.circle")
+            .font(.system(size: 11.5))
+            .foregroundStyle(hovering || shown ? Theme.text2 : Theme.text3)
+            .frame(width: 16, height: 16)
+            .contentShape(Rectangle())
+            .onHover { inside in
+                hovering = inside
+                if inside {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                        if hovering { shown = true }
+                    }
+                } else if !pinned {
+                    shown = false
+                }
+            }
+            .onTapGesture {
+                pinned.toggle()
+                shown = pinned
+            }
+            .popover(isPresented: $shown, arrowEdge: .bottom) {
+                Text(text)
+                    .font(.system(size: 12))
+                    .foregroundStyle(Theme.text2)
+                    .lineSpacing(3)
+                    .frame(width: 280, alignment: .leading)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 11)
+            }
+            .onChange(of: shown) { _, value in
+                if !value { pinned = false }
+            }
+            .animation(Motion.hover, value: hovering)
+            .accessibilityElement()
+            .accessibilityLabel(text)
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAction { pinned.toggle(); shown = pinned }
+    }
+}
+
 /// 设置页中的卡片分组。
+/// - footer: 卡片下面的一句话（短的、看一眼就该知道的）；更长的说明放 `help`，悬停标题旁的 ⓘ 时显示。
 struct SettingsCard<Content: View>: View {
     var title: String?
     var footer: String?
+    var help: String?
     @ViewBuilder let content: Content
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             if let title {
-                Text(title)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(Theme.text2)
-                    .padding(.leading, 4)
+                HStack(spacing: 5) {
+                    Text(title)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(Theme.text2)
+                    if let help { InfoTip(text: help) }
+                }
+                .padding(.leading, 4)
             }
             VStack(spacing: 0) {
                 content
@@ -125,11 +180,12 @@ struct SettingsCard<Content: View>: View {
     }
 }
 
-/// 卡片中的一行：左侧标题与说明，右侧控件。
+/// 卡片中的一行：左侧标题与一行短说明（或状态），右侧控件。需要解释的放 `help`，悬停标题旁的 ⓘ 时显示。
 struct SettingsRow<Control: View>: View {
     let title: String
     var detail: String?
     var detailColor: Color = Theme.text3
+    var help: String?
     var divider = true
     @ViewBuilder let control: Control
 
@@ -137,9 +193,12 @@ struct SettingsRow<Control: View>: View {
         VStack(spacing: 0) {
             HStack(alignment: .center, spacing: 16) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(title)
-                        .font(.system(size: 13))
-                        .foregroundStyle(Theme.text)
+                    HStack(spacing: 5) {
+                        Text(title)
+                            .font(.system(size: 13))
+                            .foregroundStyle(Theme.text)
+                        if let help { InfoTip(text: help) }
+                    }
                     if let detail {
                         Text(detail)
                             .font(.system(size: 11.5))

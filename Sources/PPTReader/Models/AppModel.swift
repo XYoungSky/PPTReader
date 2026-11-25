@@ -69,7 +69,7 @@ final class AppModel {
     func chooseFolder() {
         let panel = NSOpenPanel()
         panel.title = tr("选择课程文件夹", "Choose a course folder")
-        panel.message = tr("只读取，不会修改任何文件", "Read-only — nothing in the folder is changed")
+        panel.message = tr("仅读取，不修改任何文件", "Read-only; no files are modified")
         panel.prompt = tr("打开", "Open")
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
@@ -121,7 +121,7 @@ final class AppModel {
                 guard !Task.isCancelled else { return }
 
                 guard let document = PDFDocument(url: pdfURL) else {
-                    throw ReaderError(tr("无法读取这个 PDF，文件可能已损坏。", "Can't read this PDF; it may be damaged."))
+                    throw ReaderError(tr("无法读取此 PDF，文件可能已损坏。", "Can't read this PDF; it may be damaged."))
                 }
                 if document.isLocked && !document.unlock(withPassword: "") {
                     throw ReaderError(tr("暂不支持有密码的 PDF。", "Password-protected PDFs aren't supported."))

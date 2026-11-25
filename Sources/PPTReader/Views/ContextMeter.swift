@@ -116,8 +116,8 @@ private struct ContextDetail: View {
                     .foregroundStyle(Theme.text2)
                 if report.cacheLikelyExpired(at: timeline.date), let lifetime = report.cacheLifetime {
                     let minutes = Int(lifetime / 60)
-                    Text(tr("距上次提问已超过 \(minutes) 分钟，服务商的缓存可能已失效，下一问的课件部分要按全价计算。",
-                            "More than \(minutes) min since the last request, so the provider's cache has likely expired; the next question pays full price for the deck."))
+                    Text(tr("距上次提问已超过 \(minutes) 分钟，缓存可能已失效，下次提问的课件部分将按全价计费。",
+                            "Over \(minutes) min since the last request; the cache may have expired, so the deck will be billed at full price next time."))
                         .font(.system(size: 11.5))
                         .foregroundStyle(Theme.danger)
                         .fixedSize(horizontal: false, vertical: true)
@@ -127,7 +127,7 @@ private struct ContextDetail: View {
     }
 
     private var cacheLine: String {
-        guard let rate = report.cacheHitRate else { return tr("缓存：等待本次回答的用量", "Cache: waiting for usage") }
+        guard let rate = report.cacheHitRate else { return tr("缓存：等待用量数据", "Cache: awaiting usage") }
         var line = tr("缓存命中 ", "Cache hit ") + StatsFormat.percent(rate)
         if let write = report.usage?.cacheWrite, write > 0 {
             line += tr(" · 写入 ", " · wrote ") + TokenEstimate.label(write)
@@ -139,7 +139,7 @@ private struct ContextDetail: View {
     private var recordSection: some View {
         VStack(alignment: .leading, spacing: 6) {
             if isRecording {
-                Text(tr("正在把较早的对话整理成学习记录…", "Condensing earlier messages into a study record…"))
+                Text(tr("正在将较早的对话整理为学习记录…", "Condensing earlier messages into a study record…"))
                     .font(.system(size: 12))
                     .foregroundStyle(Theme.text2)
             }

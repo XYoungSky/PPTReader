@@ -216,10 +216,10 @@ final class ShortcutStore {
 
         var text: String {
             switch self {
-            case .moved(let action): tr("已从「\(action.title)」移到这里", "Moved from “\(action.title)”")
+            case .moved(let action): tr("已从「\(action.title)」移至此处", "Moved from “\(action.title)”")
             case .needsModifier: tr("需包含 ⌘ 或 ⌃", "Include ⌘ or ⌃")
             case .reserved(let combo): tr("\(combo) 是系统快捷键", "\(combo) is reserved by the system")
-            case .unsupported: tr("不支持这个按键", "This key isn't supported")
+            case .unsupported: tr("不支持该按键", "This key is not supported")
             }
         }
 

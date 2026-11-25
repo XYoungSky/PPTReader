@@ -55,7 +55,7 @@ struct ReaderColumn: View {
             StatusView(title: tr("正在打开", "Opening"), detail: name, showsProgress: true)
         case .converting(let name, let app):
             StatusView(title: tr("正在转换 \(name)", "Converting \(name)"),
-                       detail: tr("首次打开需用 \(app) 转换，之后秒开", "First open only — converting with \(app)"),
+                       detail: tr("首次打开需用 \(app) 转换，此后直接打开", "Converting with \(app); only needed the first time"),
                        showsProgress: true)
         case .failed(let name, let message):
             StatusView(title: tr("无法打开 \(name)", "Can't open \(name)"), detail: message, showsProgress: false) {
@@ -119,7 +119,7 @@ struct WelcomeView: View {
                 .frame(width: 52, height: 52)
                 .background(Circle().fill(Theme.accent.opacity(0.1)))
                 .padding(.bottom, 4)
-            Text(model.library.rootURL == nil ? tr("打开课程文件夹", "Open a course folder") : tr("选择一个课件", "Pick a file to start"))
+            Text(model.library.rootURL == nil ? tr("打开课程文件夹", "Open a course folder") : tr("选择课件", "Choose a deck"))
                 .font(.system(size: 22, weight: .semibold, design: .serif))
                 .foregroundStyle(Theme.text)
             if model.library.rootURL == nil {
@@ -129,7 +129,7 @@ struct WelcomeView: View {
                 Button(tr("打开文件夹…", "Open Folder…")) { model.chooseFolder() }
                     .buttonStyle(AccentButtonStyle())
                     .padding(.top, 10)
-                Text(tr("或拖到这里", "or drop it here"))
+                Text(tr("或将文件夹拖到此处", "or drop a folder here"))
                     .font(.system(size: 11.5))
                     .foregroundStyle(Theme.text3)
             }

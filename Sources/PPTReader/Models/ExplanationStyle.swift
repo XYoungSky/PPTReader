@@ -31,9 +31,9 @@ struct ExplanationStyle: Equatable {
         /// 设置页中对当前选项的说明。
         var summary: String {
             switch self {
-            case .concise: tr("只讲核心意思和用得上的公式，一般两三段", "Core idea and the formulas that matter, usually two or three paragraphs")
-            case .normal: tr("核心概念讲透，难点多写，简单处从简", "Explain the core ideas properly; more words on the hard parts")
-            case .detailed: tr("讲清为什么、每个符号和推导步骤，补上前提知识", "Why it works, every symbol and step, plus the prerequisites")
+            case .concise: tr("核心概念与关键公式，两三段", "Core ideas and key formulas, a few paragraphs")
+            case .normal: tr("完整讲解核心概念，展开难点", "Core ideas in full, with more on difficult parts")
+            case .detailed: tr("说明原理、符号与完整推导", "Principles, notation and full derivations")
             }
         }
 
@@ -65,9 +65,9 @@ struct ExplanationStyle: Equatable {
 
         var summary: String {
             switch self {
-            case .minimal: tr("用文字和公式讲，文字说不清的结构才画", "Words and formulas; draw only when words can't do it")
-            case .normal: tr("讲解页面或难点时，能画出来的关系就配一张图", "Add a diagram when a page or hard idea has something drawable")
-            case .frequent: tr("每次讲解至少一张图，结构、流程、图像都画出来", "At least one diagram per explanation; draw structures, processes, graphs")
+            case .minimal: tr("仅在文字难以说明时配图", "Only when text is not enough")
+            case .normal: tr("适合图示的内容配图", "For content that suits a diagram")
+            case .frequent: tr("每次讲解至少一张", "At least one per explanation")
             }
         }
 
@@ -99,9 +99,9 @@ struct ExplanationStyle: Equatable {
 
         var summary: String {
             switch self {
-            case .none: tr("直接讲知识本身，课件里原有的题照常讲", "Explain the ideas directly; problems in the deck are still covered")
-            case .necessary: tr("具体算一遍明显更好懂时举一道", "One worked example when a calculation would make it click")
-            case .everyConcept: tr("每个实质性的知识点后面跟一道例题", "A worked example after every substantive concept")
+            case .none: tr("不额外举例", "No additional examples")
+            case .necessary: tr("必要时举例演算", "When a worked example helps")
+            case .everyConcept: tr("每个知识点配一道例题", "One for each concept")
             }
         }
 

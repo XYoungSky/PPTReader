@@ -8,8 +8,7 @@ struct ExplanationStyleSettings: View {
         @Bindable var settings = settings
         let style = settings.explanationStyle
         VStack(alignment: .leading, spacing: 22) {
-            SettingsCard(footer: tr("对之后的回答生效，已有的回答不变。在消息里直接提的要求（如“详细点”“画个图”“举个例子”）优先于这里的设置。",
-                                    "Applies to new answers; existing ones stay as they are. Anything you ask for in a message (more detail, a diagram, an example) takes precedence.")) {
+            SettingsCard(footer: tr("对新的回答生效；消息中的明确要求优先。", "Applies to new answers. Explicit requests in a message take precedence.")) {
                 SettingsRow(title: tr("篇幅", "Length"), detail: style.detail.summary) {
                     SegmentedPicker(selection: $settings.explanationStyle.detail,
                                     options: ExplanationStyle.Detail.allCases.map { ($0, $0.title) })
@@ -50,8 +49,7 @@ private struct CustomStyleCard: View {
     var body: some View {
         let limit = ExplanationStyle.customLimit
         SettingsCard(title: tr("自定义要求", "Custom instructions"),
-                     footer: tr("随每次提问发给模型；和上面的选项冲突时，以这里写的为准。",
-                                "Sent with every question. Where it conflicts with the options above, this wins.")) {
+                     help: tr("随每次提问发送；与上方选项冲突时，以此处为准。", "Sent with every question. Takes precedence over the options above.")) {
             VStack(alignment: .leading, spacing: 10) {
                 ZStack(alignment: .topLeading) {
                     TextEditor(text: $text)
@@ -61,8 +59,8 @@ private struct CustomStyleCard: View {
                         .scrollIndicators(.never)
                         .focused($focused)
                     if text.isEmpty {
-                        Text(tr("写下你希望模型怎么讲，例如：多结合工程里的实际应用；推导写完整；每讲完一部分提一个思考题。",
-                                "Describe how you'd like things explained, e.g. relate ideas to real engineering uses; write out full derivations; end each part with a question to think about."))
+                        Text(tr("例如：结合工程应用；给出完整推导；每部分后附一道思考题",
+                                "e.g. Relate to engineering practice; give full derivations; end each part with a question"))
                             .font(.system(size: 13))
                             .foregroundStyle(Theme.text3)
                             .padding(.leading, 5)

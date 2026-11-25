@@ -354,7 +354,7 @@ struct LectureOrganizerTests {
                 Issue.record("应该失败")
                 return
             }
-            #expect(message.contains("截断") || message.contains("cut off"))
+            #expect(message.contains("截断") || message.contains("truncated"))
             controller.cancelOrganize(r.id)
             #expect(controller.organizing[r.id] == nil)
         }

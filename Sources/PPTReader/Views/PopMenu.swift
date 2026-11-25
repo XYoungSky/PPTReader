@@ -100,7 +100,7 @@ final class PopMenuModel {
             if shown == 0 {
                 result.insert(.note(tr("没有匹配的项", "No matches")), at: anchor)
             } else if hidden > 0 {
-                result.insert(.note(tr("还有 \(hidden) 项，输入名称搜索", "\(hidden) more — type to search")), at: anchor)
+                result.insert(.note(tr("另有 \(hidden) 项，输入名称以搜索", "\(hidden) more · type to search")), at: anchor)
             }
         }
         items = Self.tidy(result)

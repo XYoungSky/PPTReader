@@ -24,18 +24,18 @@ enum APIError: LocalizedError {
         case .missingKey:
             tr("尚未设置 API Key", "API key not set")
         case .missingModel:
-            tr("请先在设置中选择或填写模型名称", "Choose or enter a model name in Settings first")
+            tr("请在设置中选择或填写模型名称", "Choose or enter a model name in Settings")
         case .invalidURL(let url):
             tr("API 地址无效：", "Invalid API URL: ") + url
         case .http(let code, let message):
             "\(Self.hint(for: code)) (HTTP \(code))" + (message.isEmpty ? "" : "\n\(message)")
                 + (Self.isCodingAgentOnly(code, message)
-                    ? "\n" + tr("Kimi Code 会员订阅的 API 目前只对编程工具开放。可以改用 Kimi 开放平台（按量付费）的 API Key。",
-                                "The Kimi Code membership API is currently limited to coding tools. You can use a Kimi Platform (pay-as-you-go) API key instead.")
+                    ? "\n" + tr("Kimi Code 会员 API 目前仅对编程工具开放，请改用 Kimi 开放平台（按量付费）的 API Key。",
+                                "The Kimi Code membership API is limited to coding tools. Use a Kimi Platform (pay-as-you-go) API key instead.")
                     : "")
         case .kimiCodeKeyMismatch(let message):
             "\(Self.hint(for: 401)) (HTTP 401)" + (message.isEmpty ? "" : "\n\(message)") + "\n"
-                + tr("这是 Kimi Code 会员订阅的 Key（sk-kimi- 开头），只能用于 https://api.kimi.com/coding/v1。api.moonshot.cn 是按量付费的 Kimi 开放平台，需要在 platform.moonshot.cn 另外创建 Key。",
+                + tr("此为 Kimi Code 会员 Key（以 sk-kimi- 开头），仅适用于 https://api.kimi.com/coding/v1。Kimi 开放平台（api.moonshot.cn）需在 platform.moonshot.cn 另行创建 Key。",
                      "This is a Kimi Code membership key (sk-kimi-…), which only works with https://api.kimi.com/coding/v1. api.moonshot.cn is the pay-as-you-go Kimi Platform and needs its own key from platform.moonshot.cn.")
         case .server(let message):
             tr("服务端错误：", "Server error: ") + message
@@ -423,16 +423,16 @@ enum OpenAIClient {
         if config.kind == .openRouter {
             var hint: String?
             if status == 402 {
-                hint = tr("OpenRouter 账户额度不足，请到 openrouter.ai/settings/credits 充值后再试。",
+                hint = tr("OpenRouter 账户额度不足，请在 openrouter.ai/settings/credits 充值后重试。",
                           "Your OpenRouter credits have run out. Add credits at openrouter.ai/settings/credits and try again.")
             } else if isPermanent(status, data, config) {
-                hint = tr("OpenRouter 上暂时没有满足条件的服务商可以处理这个模型。可以换一个模型，或稍后再试。",
-                          "No OpenRouter provider that meets the request's requirements is available for this model. Try another model, or try again later.")
+                hint = tr("OpenRouter 暂无符合条件的服务商可处理该模型，请更换模型或稍后重试。",
+                          "No OpenRouter provider meeting the requirements is available for this model. Try another model or try again later.")
             }
             // 打开了隐私限制时，没有可用上游多半是因为它（文档没写这时的状态码，404 和 503 都提示）
             if config.privacy != .any, status == 404 || isPermanent(status, data, config) {
                 hint = (hint.map { $0 + "\n" } ?? "")
-                    + tr("也可能是隐私限制（\(config.privacy.title)）下没有可用的上游，可以在设置里放宽。",
+                    + tr("也可能是隐私限制（\(config.privacy.title)）下没有可用的上游，可在设置中放宽。",
                          "It may also be that no provider meets the privacy setting (\(config.privacy.title)); you can relax it in Settings.")
             }
             if let hint { message = message.isEmpty ? hint : message + "\n" + hint }
