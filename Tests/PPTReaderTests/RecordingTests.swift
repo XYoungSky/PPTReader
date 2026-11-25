@@ -59,6 +59,30 @@ struct RecordingTests {
         #expect(recording([segment(1, 1), segment(3, 1)]).nextSegmentIndex == 4)
     }
 
+    // MARK: - 标签
+
+    @Test("从路径里认出课程编号：优先课程文件夹，大小写和分隔符都容忍；没有时为空")
+    func courseCode() {
+        #expect(Recording.courseCode(in: ["/Users/me/Year3/Y3S1/ADS205"]) == "ADS205")
+        #expect(Recording.courseCode(in: [nil, "/Courses/COMP 3021 Networks/L01.pdf"]) == "COMP3021")
+        #expect(Recording.courseCode(in: ["/Courses/CS-101A/Week1"]) == "CS101A")
+        #expect(Recording.courseCode(in: ["/Users/me/Desktop/Year3/Notes"]) == nil)
+        #expect(Recording.courseCode(in: ["/x/MyY3S1"]) == nil)
+        // 课程文件夹认不出时看课件路径
+        #expect(Recording.courseCode(in: ["/Users/me/OS", "/Users/me/OS/MATH2001/lec.pdf"]) == "MATH2001")
+    }
+
+    @Test("显示的标签：保存过的优先，没有时用认出的课程编号；输入的标签按逗号拆开去重")
+    func tags() {
+        var r = recording([])
+        r.coursePath = "/c/ADS205"
+        #expect(r.displayTags == ["ADS205"])
+        r.tags = ["Exam", "ADS205"]
+        #expect(r.displayTags == ["Exam", "ADS205"])
+        #expect(Recording.parseTags(" ADS205, 期中，ads205 ;week 9\n") == ["ADS205", "期中", "week 9"])
+        #expect(Recording.parseTags("  ") == [])
+    }
+
     // MARK: - 清单
 
     @Test("清单存进去再读出来不变；新的在前")

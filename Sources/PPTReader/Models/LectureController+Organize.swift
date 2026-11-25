@@ -48,8 +48,11 @@ extension LectureController {
             guard let self else { return }
             defer { self.organizeTasks[id] = nil }
             do {
-                let options = try await self.findDecks(recording)
+                let (options, course) = try await self.findDecks(recording)
                 guard !Task.isCancelled else { return }
+                if let course {
+                    _ = try? self.store.update(id) { $0.tags = [course] + $0.tags.filter { $0.caseInsensitiveCompare(course) != .orderedSame } }
+                }
                 self.organizing[id] = .choosing(options)
             } catch {
                 self.organizeFailed(id, error)
@@ -58,23 +61,25 @@ extension LectureController {
         }
     }
 
-    private func findDecks(_ recording: Recording) async throws -> [DeckOption] {
+    /// 第 1 步：相关课件（让用户确认）和课程编号。
+    private func findDecks(_ recording: Recording) async throws -> ([DeckOption], String?) {
         let lines = LectureOrganizer.timed(store.transcript(recording.id), in: recording)
         guard !lines.isEmpty else { throw OrganizeFailure.noTranscript }
-        let course = (recording.coursePath ?? recording.deckPath.map { URL(fileURLWithPath: $0).deletingLastPathComponent().path })
+        let folder = (recording.coursePath ?? recording.deckPath.map { URL(fileURLWithPath: $0).deletingLastPathComponent().path })
             .map { URL(fileURLWithPath: $0) }
         let recorded = recording.deckPath
         let candidates = await Task.detached(priority: .userInitiated) {
-            course.map { LectureOrganizer.candidates(course: $0, recordedDeck: recorded) } ?? []
+            folder.map { LectureOrganizer.candidates(course: $0, recordedDeck: recorded) } ?? []
         }.value
         var options = candidates.map { DeckOption(candidate: $0, suggested: false, reason: "") }
         let readable = candidates.filter(\.readable)
-        // 只有一份能读的课件时不用问模型
-        guard readable.count > 1 else {
+        let guessed = Recording.courseCode(in: [recording.coursePath, recording.deckPath])
+        // 只有一份能读的课件、路径里也认得出课程编号时，不用问模型
+        guard readable.count > 1 || guessed == nil else {
             if let only = readable.first, let i = options.firstIndex(where: { $0.candidate.path == only.path }) {
                 options[i].suggested = true
             }
-            return options
+            return (options, guessed)
         }
         guard completion != nil || settings.canRequest(.lectureDecks) else { throw OrganizeFailure.notConfigured }
         let messages = LectureOrganizer.deckMessages(recording: recording, excerpt: LectureOrganizer.excerpt(lines),
@@ -83,6 +88,7 @@ extension LectureController {
         guard let choices = LectureOrganizer.parseDecks(output.text, candidates: candidates) else {
             throw OrganizeFailure.unreadable(truncated: output.truncated)
         }
+        let course = LectureOrganizer.parseCourse(output.text) ?? guessed
         for choice in choices {
             if let i = options.firstIndex(where: { $0.candidate.path == choice.path }) {
                 options[i].suggested = true
@@ -90,7 +96,7 @@ extension LectureController {
             }
         }
         // 模型建议的排在前面
-        return options.filter(\.suggested) + options.filter { !$0.suggested }
+        return (options.filter(\.suggested) + options.filter { !$0.suggested }, course)
     }
 
     // MARK: - 第 2、3 步

@@ -1,7 +1,7 @@
 // 课堂录音窗口：左边是录音列表（按课程分组），右边是回放、转写，以及整理出的补充要点和课程安排。
 // 原生端调用：
 //   Recordings.setList({lang, items, selected})
-//     items: [{id, title, course, startedAt(毫秒), duration(秒), status: 'recording'|'transcribing'|'ready', organized, elapsed?}]
+//     items: [{id, title, course, tags, startedAt(毫秒), duration(秒), status: 'recording'|'transcribing'|'ready', organized, elapsed?}]
 //   Recordings.showDetail({id, title, startedAt, duration, locale, deck, status, segments, lines, live, supplements, organize})
 //     supplements: [{kind: 'supplement'|'arrangement', deck, deckTitle, page, point, quote, t}]（整理过才有）
 //     segments: [{index, duration, state: 'complete'|'damaged'|'recording', transcribed, queued}]
@@ -37,6 +37,8 @@
   let tab = 'transcript';
   let playback = { time: 0, playing: false, rate: 1 };
   let query = '';
+  /** 列表的搜索：标题、标签、课程、日期。 */
+  let listQuery = '';
   /** 用户自己滚动了转写：几秒内不自动滚到当前句。 */
   let manualScrollUntil = 0;
   /** 上次显示的整理阶段：阶段变了就滚回顶部，让面板露出来。 */
@@ -77,13 +79,29 @@
 
   // ---------- 列表 ----------
 
+  function matchesList(item) {
+    const needle = listQuery.trim().toLowerCase();
+    if (!needle) return true;
+    const when = day(item.startedAt);
+    return [item.title, item.course, when.date, ...(item.tags || [])].some((field) => (field || '').toLowerCase().includes(needle));
+  }
+
   function renderList() {
     $('list-title').textContent = t('课堂录音', 'Lectures');
+    $('list-search-input').placeholder = t('搜索标题、标签、日期', 'Search titles, tags, dates');
     const list = $('list');
     list.textContent = '';
     const groups = new Map();
-    for (const item of items) {
-      const key = item.course || t('未归入课程', 'No course');
+    const shown = items.filter(matchesList);
+    if (!shown.length && items.length) {
+      const none = document.createElement('div');
+      none.className = 'group';
+      none.textContent = t('没有找到', 'No matches');
+      list.appendChild(none);
+    }
+    for (const item of shown) {
+      // 按第一个标签（通常是课程编号）分组，没有标签时按课程文件夹
+      const key = (item.tags && item.tags[0]) || item.course || t('未归入课程', 'No course');
       if (!groups.has(key)) groups.set(key, []);
       groups.get(key).push(item);
     }
@@ -131,7 +149,8 @@
     const when = day(d.startedAt);
     const parts = [`${when.date} ${when.time}`, recording ? t('正在录音', 'Recording now') : length(d.duration), localeName(d.locale)];
     if (d.deck) parts.push(escape(d.deck));
-    $('meta').innerHTML = parts.map((p) => `<span>${p}</span>`).join('<span class="dot">·</span>');
+    $('meta').innerHTML = (d.tags || []).map((tag) => `<button type="button" class="chip tag-filter" data-tag="${escape(tag)}" title="${t('列出这个标签的录音', 'Show recordings with this tag')}">${escape(tag)}</button>`).join('')
+      + parts.map((p) => `<span>${p}</span>`).join('<span class="dot">·</span>');
 
     const organize = $('organize');
     organize.innerHTML = ICON.sparkles + `<span>${d.supplements ? t('重新整理', 'Organize again') : t('AI 整理', 'Organize with AI')}</span>`;
@@ -569,6 +588,7 @@
     const menu = $('menu');
     const entries = [
       ['rename', t('重命名…', 'Rename…')],
+      ['editTags', t('编辑标签…', 'Edit Tags…')],
       ['reveal', t('在访达中显示', 'Show in Finder')],
       null,
       ['exportAudio', t('导出音频（m4a）…', 'Export Audio (m4a)…')],
@@ -635,6 +655,14 @@
       searchTimer = setTimeout(() => { query = event.target.value; renderContent(); }, 180);
     });
     $('content').addEventListener('wheel', () => { manualScrollUntil = Date.now() + 4000; }, { passive: true });
+    $('list-search-input').addEventListener('input', (event) => { listQuery = event.target.value; renderList(); });
+    $('meta').addEventListener('click', (event) => {
+      const chip = event.target.closest('.tag-filter');
+      if (!chip) return;
+      listQuery = chip.dataset.tag;
+      $('list-search-input').value = listQuery;
+      renderList();
+    });
     document.addEventListener('keydown', (event) => {
       if (event.target.tagName === 'INPUT') return;
       if (event.key === ' ') { event.preventDefault(); togglePlay(); }
@@ -742,10 +770,10 @@
   const now = new Date();
   const at = (daysAgo, h, m) => new Date(now.getFullYear(), now.getMonth(), now.getDate() - daysAgo, h, m).getTime();
   const DEMO = {
-    live: { id: 'live', title: '第 5 章 CPU 调度', course: '操作系统', startedAt: at(0, 16, 10), duration: 2538, elapsed: 2538, status: 'recording', locale: 'en_US', deck: '05-scheduling.pdf',
+    live: { id: 'live', title: '第 5 章 CPU 调度', course: '操作系统', tags: ['COMP3021'], startedAt: at(0, 16, 10), duration: 2538, elapsed: 2538, status: 'recording', locale: 'en_US', deck: '05-scheduling.pdf',
       segments: [1, 2, 3, 4, 5, 6, 7, 8].map((i) => ({ index: i, duration: 300, state: 'complete', transcribed: i < 8 })).concat([{ index: 9, duration: 0, state: 'recording', transcribed: false }]),
       live: { text: 'So the shortest job first algorithm is optimal for average waiting time,', volatile: 'but the problem is we usually don\'t know how long' } },
-    a: { id: 'a', title: '第 4 章 进程与线程', course: '操作系统', startedAt: at(0, 14, 30), status: 'ready', locale: 'en_US', deck: '04-processes-threads.pdf',
+    a: { id: 'a', title: '第 4 章 进程与线程', course: '操作系统', tags: ['COMP3021', 'Week 4'], startedAt: at(0, 14, 30), status: 'ready', locale: 'en_US', deck: '04-processes-threads.pdf',
       segments: [
         { index: 1, duration: 300, state: 'complete', transcribed: true },
         { index: 2, duration: 300, state: 'complete', transcribed: true },
@@ -753,9 +781,9 @@
         { index: 4, duration: 300, state: 'complete', transcribed: true },
         { index: 5, duration: 214, state: 'complete', transcribed: true },
       ] },
-    b: { id: 'b', title: '第 3 章 内存管理', course: '操作系统', startedAt: at(5, 14, 30), duration: 5712, status: 'ready', organized: true, locale: 'en_GB', deck: '03-memory.pdf',
+    b: { id: 'b', title: '第 3 章 内存管理', course: '操作系统', tags: ['COMP3021'], startedAt: at(5, 14, 30), duration: 5712, status: 'ready', organized: true, locale: 'en_GB', deck: '03-memory.pdf',
       segments: [{ index: 1, duration: 300, state: 'complete', transcribed: true }, { index: 2, duration: 300, state: 'complete', transcribed: true }], supplements: [] },
-    c: { id: 'c', title: 'Red-Black Trees', course: '数据结构与算法', startedAt: at(4, 9, 0), duration: 7360, status: 'ready', locale: 'en_GB', deck: 'L07-rbtrees.pdf',
+    c: { id: 'c', title: 'Red-Black Trees', course: '数据结构与算法', tags: ['ADS205'], startedAt: at(4, 9, 0), duration: 7360, status: 'ready', locale: 'en_GB', deck: 'L07-rbtrees.pdf',
       segments: [{ index: 1, duration: 300, state: 'complete', transcribed: true }] },
   };
   for (const r of Object.values(DEMO)) {
@@ -792,8 +820,8 @@
   window.Recordings.setList({
     lang,
     selected: 'a',
-    items: [DEMO.live, DEMO.a, DEMO.b, DEMO.c].map(({ id, title, course, startedAt, duration, status, organized, elapsed }) =>
-      ({ id, title, course, startedAt, duration, status, organized, elapsed })),
+    items: [DEMO.live, DEMO.a, DEMO.b, DEMO.c].map(({ id, title, course, tags, startedAt, duration, status, supplements, elapsed }) =>
+      ({ id, title, course, tags, startedAt, duration, status, organized: !!supplements, elapsed })),
   });
   demoSelect('a');
   window.__demo = {

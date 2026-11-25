@@ -105,7 +105,16 @@ struct LectureOrganizerTests {
         #expect(user.contains("[1] a（文件夹：Lectures） —— 录音时打开的课件\nProcesses"))
         #expect(user.contains("[2] b\n（读不到文字）"))
         #expect(user.contains("<transcript_excerpt>\n[00:01] hi"))
-        #expect((messages.first?["content"] as? String)?.contains("\"decks\"") == true)
+        #expect(user.contains("课程文件夹：c\n"))
+        #expect((messages.first?["content"] as? String)?.contains("\"course\"") == true)
+    }
+
+    @Test("读出课程编号：去掉空格、转大写；太长、没有数字的不算")
+    func parseCourse() {
+        #expect(O.parseCourse(#"{"course":"comp 3021","decks":[]}"#) == "COMP3021")
+        #expect(O.parseCourse(#"{"course":null,"decks":[]}"#) == nil)
+        #expect(O.parseCourse(#"{"course":"Operating Systems"}"#) == nil)
+        #expect(O.parseCourse(#"{"decks":[]}"#) == nil)
     }
 
     @Test("读出相关课件：编号可以是字符串，越界和重复的去掉，读不出时为空")
@@ -228,7 +237,7 @@ struct LectureOrganizerTests {
                 case .lectureDecks:
                     // 列表顺序：录音时打开的那份所在的文件夹里，按名字排
                     #expect(user.contains("[2] 04-processes") && user.contains("[3] 05-scheduling"))
-                    text = #"{"decks":[{"id":2,"reason":"PCB"},{"id":3,"reason":"round robin"}]}"#
+                    text = #"{"course":"comp 3021","decks":[{"id":2,"reason":"PCB"},{"id":3,"reason":"round robin"}]}"#
                 default:
                     text = user.contains(" 1/2")
                         ? #"{"items":[{"kind":"supplement","deck":1,"page":1,"point":"PCB 存寄存器","quote":"The PCB","start":"00:05"},{"kind":"arrangement","page":null,"point":"考试会考","quote":"exam","start":"06:40"}]}"#
@@ -245,6 +254,7 @@ struct LectureOrganizerTests {
             }
             #expect(options.filter(\.suggested).map(\.candidate.title) == ["04-processes", "05-scheduling"])
             #expect(options.first?.reason == "PCB")
+            #expect(store.load(r.id)?.tags == ["COMP3021"])
 
             controller.confirmOrganize(r.id, decks: [deckA.path, deckB.path])
             while controller.organizeTasks[r.id] != nil { await Task.yield() }

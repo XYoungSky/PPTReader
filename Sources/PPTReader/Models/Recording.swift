@@ -17,6 +17,8 @@ struct Recording: Codable, Identifiable, Equatable, Sendable {
     var segments: [Segment]
     /// 整理第 1 步确认过的相关课件。
     var relatedDecks: [String]
+    /// 标签，第一个通常是课程编号（例如 ADS205），方便查找和分组。
+    var tags: [String]
 
     struct Segment: Codable, Equatable, Sendable {
         /// 从 1 开始。
@@ -42,7 +44,7 @@ struct Recording: Codable, Identifiable, Equatable, Sendable {
     }
 
     init(id: String, title: String, startedAt: Date, coursePath: String?, deckPath: String?,
-         locale: String, bitRate: Int, segments: [Segment] = [], relatedDecks: [String] = []) {
+         locale: String, bitRate: Int, segments: [Segment] = [], relatedDecks: [String] = [], tags: [String] = []) {
         self.id = id
         self.title = title
         self.startedAt = startedAt
@@ -52,10 +54,11 @@ struct Recording: Codable, Identifiable, Equatable, Sendable {
         self.bitRate = bitRate
         self.segments = segments
         self.relatedDecks = relatedDecks
+        self.tags = tags
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, title, startedAt, coursePath, deckPath, locale, bitRate, segments, relatedDecks
+        case id, title, startedAt, coursePath, deckPath, locale, bitRate, segments, relatedDecks, tags
     }
 
     /// 以后加的字段都要有默认值，旧清单照样读得出来。
@@ -70,6 +73,39 @@ struct Recording: Codable, Identifiable, Equatable, Sendable {
         bitRate = try c.decodeIfPresent(Int.self, forKey: .bitRate) ?? 32_000
         segments = try c.decodeIfPresent([Segment].self, forKey: .segments) ?? []
         relatedDecks = try c.decodeIfPresent([String].self, forKey: .relatedDecks) ?? []
+        tags = try c.decodeIfPresent([String].self, forKey: .tags) ?? []
+    }
+
+    // MARK: - 标签
+
+    /// 从路径里认出课程编号：2–5 个大写字母加 3–4 位数字（可以带一个字母后缀），例如 ADS205、CS 101、COMP3021A。
+    /// 先看课程文件夹，再看课件所在的各级文件夹和课件名。
+    static func courseCode(in paths: [String?]) -> String? {
+        let pattern = try! NSRegularExpression(pattern: "(?<![A-Za-z])([A-Z]{2,5})[ _-]?(\\d{3,4}[A-Z]?)(?![0-9])")
+        for path in paths.compactMap({ $0 }) {
+            for component in URL(fileURLWithPath: path).pathComponents.reversed() {
+                let range = NSRange(component.startIndex..., in: component)
+                if let match = pattern.firstMatch(in: component, range: range),
+                   let letters = Range(match.range(at: 1), in: component), let digits = Range(match.range(at: 2), in: component) {
+                    return String(component[letters]) + String(component[digits])
+                }
+            }
+        }
+        return nil
+    }
+
+    /// 显示用的标签：没有保存的标签时，用路径里认出的课程编号。
+    var displayTags: [String] {
+        if !tags.isEmpty { return tags }
+        return Self.courseCode(in: [coursePath, deckPath]).map { [$0] } ?? []
+    }
+
+    /// 把用户输入的“a, b，c”拆成标签：去掉空白和重复的。
+    static func parseTags(_ text: String) -> [String] {
+        var seen = Set<String>()
+        return text.split(whereSeparator: { ",，;；\n".contains($0) })
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty && seen.insert($0.lowercased()).inserted }
     }
 
     // MARK: - 时间

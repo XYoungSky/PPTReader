@@ -126,7 +126,13 @@ final class LectureController {
                 problem = tr("无法开始录音：", "Couldn't start recording: ") + error.localizedDescription
                 return
             }
-            if let id = recorder.recording?.id { transcription.terms[id] = TranscriptText.terms(in: context.pages) }
+            if let id = recorder.recording?.id {
+                transcription.terms[id] = TranscriptText.terms(in: context.pages)
+                // 路径里认得出课程编号时先作为标签，整理时再由模型确认
+                if let code = Recording.courseCode(in: [context.coursePath, context.deckPath]) {
+                    _ = try? store.update(id) { $0.tags = [code] }
+                }
+            }
             RecordingsWindow.shared.recordingsDidChange()
             await startCaptions(locale: locale, reset: true)
         }

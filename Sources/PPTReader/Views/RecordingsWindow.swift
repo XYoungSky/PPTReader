@@ -14,6 +14,7 @@ enum RecordingsPayload {
             "duration": recording.duration,
             "status": status.rawValue,
             "organized": organized,
+            "tags": recording.displayTags,
         ]
         if let course = recording.coursePath { item["course"] = URL(fileURLWithPath: course).lastPathComponent }
         if let elapsed { item["elapsed"] = elapsed }
@@ -32,6 +33,7 @@ enum RecordingsPayload {
             "duration": duration ?? recording.duration,
             "locale": recording.locale,
             "status": status.rawValue,
+            "tags": recording.displayTags,
             "segments": recording.segments.map { segment -> [String: Any] in
                 [
                     "index": segment.index,
@@ -250,6 +252,7 @@ final class RecordingsWindow: NSObject {
                 NSApp.mainWindow?.makeKeyAndOrderFront(nil)
             }
         case "rename": if let id { rename(id) }
+        case "editTags": if let id { editTags(id) }
         case "reveal": if let id { NSWorkspace.shared.activateFileViewerSelecting([store.folder(id)]) }
         case "exportAudio": if let id { exportAudio(id) }
         case "exportText": if let id { exportText(id) }
@@ -273,6 +276,27 @@ final class RecordingsWindow: NSObject {
                 let title = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard response == .alertFirstButtonReturn, !title.isEmpty, let self else { return }
                 try? self.store.update(id) { $0.title = title }
+                self.reload()
+            }
+        }
+    }
+
+    private func editTags(_ id: String) {
+        guard let recording = store.load(id), let panel else { return }
+        let alert = NSAlert()
+        alert.messageText = tr("编辑标签", "Edit Tags")
+        alert.informativeText = tr("用逗号分开，第一个标签用来分组，通常是课程编号。", "Separate tags with commas. The first one groups the list; usually it's the course code.")
+        alert.addButton(withTitle: tr("好", "OK"))
+        alert.addButton(withTitle: tr("取消", "Cancel"))
+        let field = NSTextField(string: recording.displayTags.joined(separator: ", "))
+        field.frame = NSRect(x: 0, y: 0, width: 280, height: 24)
+        alert.accessoryView = field
+        alert.window.initialFirstResponder = field
+        alert.beginSheetModal(for: panel) { [weak self] response in
+            MainActor.assumeIsolated {
+                guard response == .alertFirstButtonReturn, let self else { return }
+                let tags = Recording.parseTags(field.stringValue)
+                _ = try? self.store.update(id) { $0.tags = tags }
                 self.reload()
             }
         }

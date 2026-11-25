@@ -202,17 +202,28 @@ enum LectureOrganizer {
         }.joined(separator: "\n\n")
         let system = english
             ? """
-              You help a student organize a recorded lecture. From the transcript excerpts, decide which of the listed decks the lecture covered: one, several, or none. The transcript comes from speech recognition and may contain misheard words.
-              Output only JSON: {"decks":[{"id":2,"reason":"one short sentence"}]}, where id is the number in the list. Output {"decks":[]} if none match.
+              You help a student organize a recorded lecture. From the transcript excerpts, decide which of the listed decks the lecture covered: one, several, or none. Also give the course code (such as ADS205 or COMP3021), from the course folder, the deck names or what the lecturer says; use null if you can't tell. The transcript comes from speech recognition and may contain misheard words.
+              Output only JSON: {"course":"ADS205","decks":[{"id":2,"reason":"one short sentence"}]}, where id is the number in the list. Use "decks":[] if none match.
               """
             : """
-              你在帮学生整理课堂录音。根据老师讲课转写的摘录，判断这节课讲的是下面列出的哪几份课件：可能是一份、几份，也可能都不是。转写是语音识别的结果，可能有听错的词。
-              只输出 JSON：{"decks":[{"id":2,"reason":"一句话理由"}]}，id 是列表里的编号。都不相关时输出 {"decks":[]}。
+              你在帮学生整理课堂录音。根据老师讲课转写的摘录，判断这节课讲的是下面列出的哪几份课件：可能是一份、几份，也可能都不是。另外给出这门课的课程编号（例如 ADS205、COMP3021），可以从课程文件夹、课件名或老师讲的话里看出来；看不出来时写 null。转写是语音识别的结果，可能有听错的词。
+              只输出 JSON：{"course":"ADS205","decks":[{"id":2,"reason":"一句话理由"}]}，id 是列表里的编号。都不相关时 "decks" 写 []。
               """
+        let folder = (recording.coursePath ?? recording.deckPath.map { URL(fileURLWithPath: $0).deletingLastPathComponent().path })
+            .map { URL(fileURLWithPath: $0).pathComponents.filter { $0 != "/" }.suffix(3).joined(separator: "/") } ?? ""
+        let deckList = list.isEmpty ? (english ? "(none found)" : "（没有找到课件）") : list
         let user = english
-            ? "Recording: \(recording.title), \(clock(recording.duration)) long.\n<transcript_excerpt>\n\(excerpt)\n</transcript_excerpt>\n\nDecks:\n\(list)"
-            : "录音：\(recording.title)，时长 \(clock(recording.duration))。\n<transcript_excerpt>\n\(excerpt)\n</transcript_excerpt>\n\n课件列表：\n\(list)"
+            ? "Recording: \(recording.title), \(clock(recording.duration)) long. Course folder: \(folder)\n<transcript_excerpt>\n\(excerpt)\n</transcript_excerpt>\n\nDecks:\n\(deckList)"
+            : "录音：\(recording.title)，时长 \(clock(recording.duration))。课程文件夹：\(folder)\n<transcript_excerpt>\n\(excerpt)\n</transcript_excerpt>\n\n课件列表：\n\(deckList)"
         return [["role": "system", "content": system], ["role": "user", "content": user]]
+    }
+
+    /// 读出课程编号：去掉空白，转成大写；太长或没有数字的不算（多半不是编号）。
+    static func parseCourse(_ output: String) -> String? {
+        guard let object = jsonValue(output) as? [String: Any], let raw = object["course"] as? String else { return nil }
+        let code = raw.replacingOccurrences(of: " ", with: "").uppercased()
+        guard (3...16).contains(code.count), code.contains(where: \.isNumber), code.contains(where: \.isLetter) else { return nil }
+        return code
     }
 
     static func parseDecks(_ output: String, candidates: [Candidate]) -> [Choice]? {
