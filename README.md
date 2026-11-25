@@ -10,6 +10,7 @@ A lightweight macOS app for studying course slides with an AI tutor that has rea
 - **Context-aware** — every question includes the whole deck's text, the page you're on, your selection and a screenshot of the page.
 - **Ways to ask** — explain this page · explain / translate / give examples for a selection · free questions · auto-explain on page turn.
 - **Box selection** — Shift-drag to draw a box around a figure, formula or any part of a slide, then explain, translate or ask about it: a sharp screenshot of the box (rendered from the PDF) and its text are sent together. Make boxing the default drag in Settings → Tutor; the question's bubble shows a thumbnail that jumps back to the page.
+- **Study roadmap** — a mind map of the deck's topics, sections and key points, each with its page range (⌘⇧M, or More → Study Roadmap in the AI panel). Pages you've asked about are marked as covered, so what's left stands out; click a node to jump to its first untouched page, collapse branches, and see every page at a glance in the strip at the top. The outline is generated once per deck and cached; summaries, concept maps, quizzes and "continue" don't count as covering a page.
 - **Rich answers** — Markdown, LaTeX, code, tables, SVG, Mermaid and inline HTML. Click any diagram to open it in a zoomable preview (pinch / ⌘-scroll, drag to pan) and copy or save it as PNG. Move the preview by its top edge or by ⌥-dragging anywhere, and make it translucent to compare it with the slides.
 - **Explanation style** — choose how long answers are and how many diagrams and worked examples they include, and add your own instructions (e.g. "write out full derivations"). Open it from the AI panel's More menu.
 - **Statistics** — reading time, pages read, questions and token usage by day, deck, course and model (7 days / 30 days / all time), plus a GitHub-style heatmap of the past year. Each deck shows the course folder it belongs to; earlier chats are counted automatically.
@@ -17,7 +18,8 @@ A lightweight macOS app for studying course slides with an AI tutor that has rea
 - **Study notes and study record** — write *About me* (applies to every deck) and *Course notes* (per course folder) under Settings → Study notes; both go into the system prompt. When a chat outgrows the context limit, the earlier messages are condensed into a study record instead of being dropped, so the tutor still knows what was covered, where you got stuck and which examples it used. The course folder itself is never modified.
 - **Context meter** — the ring at the top of the AI panel shows how much of the context window the last request used. Click it for a breakdown (instructions, notes, deck, study record, history, question, screenshot), the cache hit rate and cache writes, and a warning when the provider's cache has probably expired.
 - **Custom shortcuts** — rebind every menu command in Settings → Shortcuts.
-- **Any OpenAI-compatible API**, tuned for DeepSeek (`deepseek-flash` with vision, `deepseek-v4-pro`, thinking on/off), with support for the Kimi Code membership API (adjustable thinking effort) and OpenRouter (many providers with one key, adjustable thinking effort).
+- **Any OpenAI-compatible API**, tuned for DeepSeek (`deepseek-flash` with vision, `deepseek-v4-pro`, thinking on/off), with support for the Kimi Code membership API (adjustable thinking effort) and OpenRouter (many providers with one key, adjustable thinking effort, prompt caching for Claude models, prices in the model menu, a privacy option that only routes to providers that don't collect your data, and the actual cost in Statistics).
+- **Models by task** — in Settings → Model, pick a different provider, model and thinking setting for auto-explain, condensing the study record and the roadmap outline, e.g. a strong model for explanations and a light one for summaries. Every task follows Explain & ask until you change it; Statistics shows usage per task.
 - **Multiple providers** — save up to 5 API configurations and switch between them in Settings or from the AI panel's model menu. With long model lists (such as OpenRouter's), just type in the model menu to search; recently used models come first.
 - Chinese / English UI, light and dark mode, ~7 MB native app.
 
@@ -29,7 +31,7 @@ A lightweight macOS app for studying course slides with an AI tutor that has rea
 
 ## Build
 
-For a prebuilt app, download `PPTReader-v1.8-macOS-arm64.zip` from the [v1.8 release](https://github.com/XYoungSky/PPTReader/releases/tag/v1.8), unzip it, and move `PPTReader.app` to Applications. This build requires an Apple Silicon Mac and macOS 14 or later. It uses an ad-hoc signature and is not notarized by Apple; macOS may block the first launch.
+For a prebuilt app, download `PPTReader-v1.9-macOS-arm64.zip` from the [v1.9 release](https://github.com/XYoungSky/PPTReader/releases/tag/v1.9), unzip it, and move `PPTReader.app` to Applications. This build requires an Apple Silicon Mac and macOS 14 or later. It uses an ad-hoc signature and is not notarized by Apple; macOS may block the first launch.
 
 To build from source:
 
